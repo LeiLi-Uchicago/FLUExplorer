@@ -1,0 +1,28 @@
+# Development Log - FLU Divergence Explorer
+
+## Date: March 16, 2026
+
+### 1. Migration from RSV to FLU (H1N1/H3N2)
+- **Multi-Subtype Data Pipeline:** Overhauled `global.R` to support dynamic loading of multiple influenza subtypes. The app now merges metadata and usage tables from `data/H1N1/` and `data/H3N2/` subdirectories.
+- **Neuraminidase (NA) Protein Fix:** Implemented a critical fix in `read_csv` calls (`na = character()`) to prevent the "NA" protein name from being interpreted as a logical missing value.
+- **Robust Column Mapping:** Standardized inconsistent naming conventions across source files (e.g., mapping `Protein` to `Gene` and `HA_clade` to `Clade`) using length-stable `rename_with` logic.
+
+### 2. UI/UX Global Overhaul
+- **Centralized Header Controls:** Moved the Subtype selector to a high-visibility, fixed-position container in the top-right header, alongside the Data Mode (AA/NT) switch.
+- **Streamlined Workflow:** Removed redundant subtype selectors from all individual tabs, enabling a "select once, explore everywhere" workflow.
+- **Branding Refresh:** Updated all interface labels, home page content, and documentation to reflect the focus on Influenza Virus diversity.
+- **Safe Dropdown Handling:** Applied `na.omit()` and safe `1:nrow()` checks to all selectors to prevent Shiny crashes when handling empty or partially missing data frames (e.g., `important_pos_df`).
+
+### 3. Data Integrity & Visualization
+- **Subtype-Specific Coloring:** Implemented explicit color mapping for subtypes (H1N1: Blue, H3N2: Red) in sequencing stats and geographical plots.
+- **Enhanced Cache Logic:** Incremented the RDS cache version (`v2`) to force a rebuild, ensuring the "NA" protein fix and merged multi-subtype structure are correctly applied.
+
+---
+
+## Date: March 6, 2026 (Legacy RSV Version)
+
+### 1. Dual Variation Support (AA & NT)
+- **Standardized Data Infrastructure:** Implemented a unified data loading pipeline in `global.R` that handles both Amino Acid (AA) and Nucleotide (NT) datasets.
+- **Reactive Data Switcher:** Integrated a reactive backend in `server.R` that dynamically swaps data sources based on user selection.
+
+... (rest of legacy logs)

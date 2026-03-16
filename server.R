@@ -1,0 +1,1011 @@
+# ==========================================
+# 3. SERVER LOGIC
+# ==========================================
+server <- function(input, output, session) {
+  
+  # --- REACTIVE DATA SWITCH ---
+  current_usage_by_clade <- reactive({
+    if(input$variation_type == "AA") aa_usage_by_clade else nt_usage_by_clade
+  })
+  current_usage_by_year <- reactive({
+    if(input$variation_type == "AA") aa_usage_by_year else nt_usage_by_year
+  })
+  current_usage_by_year_month <- reactive({
+    if(input$variation_type == "AA") aa_usage_by_year_month else nt_usage_by_year_month
+  })
+  current_colors <- reactive({
+    if(input$variation_type == "AA") aa_colors else nt_colors
+  })
+  variant_label <- reactive({
+    if(input$variation_type == "AA") "AA" else "NT"
+  })
+  
+  # --- HELPER: Update Gene Dropdowns based on Subtype ---
+  observeEvent(list(input$global_subtype, input$variation_type), { updateSelectInput(session, "sp_gene", choices = current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Gene) %>% unique() %>% sort()) })
+  observeEvent(list(input$global_subtype, input$variation_type), { updateSelectInput(session, "ent_gene", choices = current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Gene) %>% unique() %>% sort()) })
+  observeEvent(list(input$global_subtype, input$variation_type), { updateSelectInput(session, "lol_gene", choices = current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Gene) %>% unique() %>% sort()) })
+  observeEvent(list(input$global_subtype, input$variation_type), { updateSelectInput(session, "heat_gene", choices = current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Gene) %>% unique() %>% sort()) })
+  
+  # --- HELPER: Update Clade Dropdowns based on Subtype ---
+  observeEvent(list(input$global_subtype, input$variation_type), {
+    clades <- current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Clade) %>% unique() %>% sort()
+    updateSelectInput(session, "pw_clade1", choices = clades, selected = clades[1])
+    updateSelectInput(session, "pw_clade2", choices = clades, selected = if(length(clades)>1) clades[2] else clades[1])
+  })
+  observeEvent(list(input$global_subtype, input$ent_gene, input$variation_type), {
+    req(input$global_subtype, input$ent_gene)
+    clade_choices <- current_usage_by_clade() %>% 
+      filter(Group == input$global_subtype, Gene == input$ent_gene) %>% 
+      pull(Clade) %>% unique() %>% sort()
+    
+    updateSelectInput(session, "ent_clade", choices = c("All", clade_choices), selected = "All")
+  })
+  observeEvent(list(input$global_subtype, input$variation_type), {
+    clades <- current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Clade) %>% unique() %>% sort()
+    updateSelectInput(session, "lol_ref_clade", choices = clades, selected = clades[1])
+    updateSelectInput(session, "lol_tar_clade", choices = clades, selected = if(length(clades)>1) clades[2] else clades[1])
+  })
+  
+  # --- HELPER: Dynamically Update Position Limit based on Gene Length (Tab 1) ---
+  observeEvent(list(input$sp_gene, input$variation_type), {
+    req(input$global_subtype, input$sp_gene)
+    g_data <- current_usage_by_clade() %>% filter(Group == input$global_subtype, Gene == input$sp_gene)
+    if(nrow(g_data) > 0) updateNumericInput(session, "sp_position", max = max(g_data$Position, na.rm=TRUE))
+  })
+  
+  # --- HELPER: Disable/Hide Quick Access in NT mode ---
+  observeEvent(input$variation_type, {
+    if (input$variation_type == "NT") {
+      shinyjs::hide("sp_quick_access_section")
+      updateSelectInput(session, "sp_quick_visit", selected = "None")
+    } else {
+      shinyjs::show("sp_quick_access_section")
+    }
+  })
+  
+  # ==========================================
+  # SERVER: TAB 1 - STATS (Map & Static Plots)
+  # ==========================================
+  
+  # 1. COORDINATE LOOKUP DATA
+  region_coords <- data.frame(
+    region = c("Africa", "Asia", "Europe", "North America", "South America", "Oceania"),
+    lat = c(1.0, 34.0, 48.0, 45.0, -15.0, -25.0),
+    lng = c(17.0, 100.0, 10.0, -100.0, -60.0, 135.0),
+    stringsAsFactors = FALSE
+  )
+  
+  world_coords <- ggplot2::map_data("world") %>%
+    dplyr::group_by(region) %>%
+    dplyr::summarise(lat = mean(lat), lng = mean(long), .groups = "drop") %>%
+    dplyr::rename(country = region) 
+  
+  output$total_seqs <- renderText({ paste0(total_raw) })
+  
+  # --- REACTIVE MAP DATA ---
+  map_data_filtered <- reactive({
+    req(input$global_subtype, input$map_geo_level, input$map_clade_type, input$map_year)
+    
+    plot_df <- metadata_global
+    
+    if(input$global_subtype != "All") {
+      plot_df <- plot_df %>% filter(Group == input$global_subtype)
+    }
+    if(input$map_year != "All") {
+      plot_df <- plot_df %>% filter(Year == input$map_year)
+    }
+    
+    geo_col <- if(input$map_geo_level == "Region") "region" else "country"
+    clade_col <- if(input$map_clade_type == "clade") "clade" else "G_clade"
+    
+    summary_df <- plot_df %>%
+      filter(!!sym(clade_col) != "" & !is.na(!!sym(clade_col))) %>%
+      group_by(!!sym(geo_col), !!sym(clade_col)) %>%
+      summarise(n = n(), .groups = "drop") %>%
+      tidyr::pivot_wider(names_from = !!sym(clade_col), values_from = n, values_fill = 0)
+    
+    if(input$map_geo_level == "Region") {
+      res <- inner_join(summary_df, region_coords, by = "region")
+    } else {
+      res <- inner_join(summary_df, world_coords, by = c("country" = "country"))
+    }
+    
+    return(as.data.frame(res))
+  })
+  
+  # --- RENDER MAP ---
+  output$world_map <- renderLeaflet({
+    data <- map_data_filtered()
+    validate(need(nrow(data) > 0, "No data available for the selected filters."))
+    
+    geo_col_name <- if(input$map_geo_level == "Region") "region" else "country"
+    
+    chart_cols <- sort(setdiff(colnames(data), c(geo_col_name, "lat", "lng")))
+    
+    active_colors <- if(input$map_clade_type == "clade") {
+      as.character(clade_colors_vec[chart_cols])
+    } else {
+      as.character(g_clade_colors_vec[chart_cols])
+    }
+    
+    leaflet(data) %>%
+      addProviderTiles(providers$CartoDB.Positron) %>%
+      setView(lng = 10, lat = 15, zoom = 2) %>% 
+      addMinicharts(
+        data$lng, data$lat,
+        type = "pie",
+        chartdata = data[, chart_cols],
+        colorPalette = active_colors, 
+        width = 45, 
+        transitionTime = 0,
+        showLabels = FALSE
+      )
+  })
+  
+  output$total_countries <- renderText({ length(unique(metadata_global$country)) })
+  output$time_range <- renderText({ 
+    paste(min(metadata_global$Year, na.rm=T), "-", max(metadata_global$Year, na.rm=T)) 
+  })
+  
+  output$stats_time_plot <- renderPlotly({
+    p <- metadata_global %>%
+      group_by(Year, Group) %>%
+      summarise(Count = n(), .groups = "drop") %>%
+      ggplot(aes(x = Year, y = Count, fill = Group, group = Group, 
+                 text = paste0("Year: ", Year,
+                               "<br>Subtype: ", Group,
+                               "<br>Sequences: ", Count))) +
+      geom_col(color = "white", size = 0.2) + 
+      scale_fill_manual(values = c("H1N1" = "#3498db", "H3N2" = "#e74c3c")) +
+      theme_minimal(base_size = 14) +
+      labs(x = "Year", y = "Sequence Count", fill = "Subtype") +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+        panel.grid.major.x = element_blank(),
+        legend.position = "bottom"
+      )    
+    ggplotly(p, tooltip = "text") %>% 
+      config(displayModeBar = FALSE)
+  })
+  
+  output$stats_geo_plot <- renderPlotly({
+    p <- metadata_global %>%
+      group_by(region) %>%
+      summarise(Count = n(), .groups = "drop") %>%
+      mutate(region_ord = reorder(region, Count)) %>% # FIX: Evaluated reorder outside of aes()
+      ggplot(aes(x = region_ord, y = Count, fill = region, group = region, # FIX: Added group
+                 text = paste0("Region: ", region, "<br>Count: ", Count))) +
+      geom_col() + 
+      scale_fill_viridis_d(option = "mako") + 
+      theme_minimal(base_size = 14) +
+      labs(x = "Region", y = "Count") +
+      theme(
+        axis.text.x = element_text(face = "bold"), 
+        axis.text.y = element_text(face = "bold"),
+        legend.position = "none" 
+      )
+    
+    ggplotly(p, tooltip = "text") %>% 
+      layout(showlegend = FALSE) %>% 
+      config(displayModeBar = FALSE)
+  })
+  
+  output$stats_clade_plot <- renderPlotly({
+    req(input$clade_plot_x, input$clade_plot_fill)
+    
+    summary_df <- metadata_global %>%
+      group_by(!!sym(input$clade_plot_x), !!sym(input$clade_plot_fill)) %>%
+      summarise(Count = n(), .groups = "drop")
+    
+    validate(need(nrow(summary_df) > 0, "No data available for the current filters."))
+    
+    fill_items <- unique(summary_df[[input$clade_plot_fill]])
+    n_colors <- length(fill_items)
+    
+    p <- ggplot(summary_df, aes(x = !!sym(input$clade_plot_x), 
+                                y = Count, 
+                                fill = !!sym(input$clade_plot_fill),
+                                group = !!sym(input$clade_plot_fill), # FIX: Added group
+                                text = paste0(input$clade_plot_x, ": ", !!sym(input$clade_plot_x),
+                                              "<br>", input$clade_plot_fill, ": ", !!sym(input$clade_plot_fill),
+                                              "<br>Count: ", Count))) +
+      geom_col(color = "white", size = 0.2) + # FIX: Changed linewidth to size
+      { if(input$clade_plot_fill %in% c("clade")) scale_fill_manual(values = clade_colors_vec) 
+        else if(input$clade_plot_fill %in% c("G_clade")) scale_fill_manual(values = g_clade_colors_vec)
+        else scale_fill_manual(values = grDevices::rainbow(n_colors)) } +
+      theme_minimal(base_size = 14) +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+        axis.title = element_text(face = "bold"),
+        legend.position = "right",
+        panel.grid.major.x = element_blank()
+      ) +
+      labs(x = input$clade_plot_x, y = "Sequence Count", fill = input$clade_plot_fill)
+    
+    ggplotly(p, tooltip = "text") %>% config(displayModeBar = FALSE)
+  })
+  
+  # ==========================================
+  # SERVER: TAB 2 - SINGLE POSITION EXPLORER
+  # ==========================================
+  
+  observeEvent(input$sp_quick_visit, {
+    req(input$sp_quick_visit != "None")
+    idx <- as.numeric(input$sp_quick_visit)
+    row_data <- important_pos_df[idx, ]
+    
+    freezeReactiveValue(input, "sp_subtype")
+    freezeReactiveValue(input, "sp_gene")
+    freezeReactiveValue(input, "sp_position")
+    
+    updateSelectInput(session, "sp_subtype", selected = as.character(row_data$Subtype))
+    updateSelectInput(session, "sp_gene", selected = as.character(row_data$Gene))
+    updateNumericInput(session, "sp_position", value = as.numeric(row_data$Position))
+  })
+  
+  trigger_data <- reactive({
+    list(input$global_subtype, input$sp_gene, input$sp_position, input$sp_group_by)
+  }) %>% debounce(100) 
+  
+  sp_filtered_data <- reactive({
+    vals <- trigger_data()
+    subtype   <- as.character(vals[[1]])
+    gene      <- as.character(vals[[2]])
+    pos       <- as.numeric(vals[[3]])
+    group_col <- as.character(vals[[4]]) 
+    
+    data <- switch(group_col,
+                   "Clade" = current_usage_by_clade(),
+                   "Year" = current_usage_by_year(),
+                   "Year_Month" = current_usage_by_year_month())
+    
+    # 1. Basic filtering and removal of "X" and "-"
+    filtered <- data %>% 
+      filter(Group == subtype, Gene == gene, Position == pos) %>%
+      filter(!(AminoAcid %in% c("X", "-"))) %>% 
+      filter(Total_in_Group >= input$sp_min_seqs)
+    
+    # 2. Recalculate frequencies based on remaining valid sequences
+    # This ensures your plot bars correctly represent 100% of the available data
+    filtered <- filtered %>%
+      group_by(across(all_of(group_col))) %>%
+      mutate(
+        Valid_Total = sum(Count),
+        `Frequency(%)` = (Count / Valid_Total) * 100
+      ) %>%
+      ungroup()
+    
+    # 3. Clean up temporal metadata if necessary
+    if (group_col == "Year_Month") {
+      filtered <- filtered %>% filter(Year_Month != "Unknown")
+    } else if (group_col == "Year") {
+      filtered <- filtered %>% filter(Year != "Unknown")
+    }
+    
+    return(filtered)
+  })
+  
+  sp_plot_ggplot <- reactive({
+    data <- sp_filtered_data()
+    
+    if(is.character(data) && grepl("Data Error", data)) return(NULL)
+    req(input$sp_font_size, input$sp_group_by)
+    validate(need(!is.null(data) && nrow(data) > 0, "No data available."))
+    
+    group_col <- input$sp_group_by
+    show_counts <- isTRUE(input$sp_show_counts)
+    y_col <- if(show_counts) "Count" else "Frequency(%)"
+    y_lab <- if(show_counts) "Sequence Count" else "Frequency (%)"
+    is_aa <- (input$variation_type == "AA")
+    has_codon <- "Codon_Usage" %in% colnames(data)
+    
+    y_scale <- if(show_counts) {
+      scale_y_continuous(expand = expansion(mult = c(0, 0.05))) 
+    } else {
+      scale_y_continuous(expand = c(0, 0), limits = c(0, 105))  
+    }
+    
+    x_scale <- if(group_col == "Year_Month") {
+      all_yms <- sort(unique(data[[group_col]]))
+      # Select every 6th label to avoid overlapping on the x-axis
+      scale_x_discrete(breaks = all_yms[seq(1, length(all_yms), by = 6)])
+    } else {
+      scale_x_discrete()
+    }
+    
+    # Pre-calculate tooltip text
+    data <- data %>%
+      mutate(tooltip_text = paste0(
+        group_col, ": ", !!sym(group_col), 
+        "<br>", if(is_aa) "Amino Acid: " else "Nucleotide: ", AminoAcid, 
+        "<br>Count: ", Count, " / ", Total_in_Group,
+        "<br>Frequency: ", round(`Frequency(%)`, 2), "%"
+      ))
+    
+    if (has_codon) {
+      data <- data %>%
+        mutate(tooltip_text = paste0(tooltip_text, "<br>Codons: ", Codon_Usage))
+    }
+    
+    # FIX: Replaced .data[[]] with !!sym() and added group = AminoAcid
+    ggplot(data, aes(x = !!sym(group_col), y = !!sym(y_col), fill = AminoAcid, group = AminoAcid,
+                     text = tooltip_text)) + 
+      geom_col(color = "black", size = 0.2) + # FIX: Changed linewidth to size
+      scale_fill_manual(values = current_colors(), drop = FALSE) + 
+      x_scale +
+      y_scale + 
+      theme_minimal(base_size = input$sp_font_size) + 
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+        panel.grid.major.x = element_blank()
+      ) +
+      labs(x = group_col, y = y_lab, fill = variant_label())
+  })
+  
+  output$sp_aa_plot <- renderPlotly({
+    p <- sp_plot_ggplot()
+    req(p)
+    ggplotly(p, tooltip = "text") %>%
+      config(displayModeBar = FALSE)
+  })
+  
+  output$downloadSpPlot <- downloadHandler(
+    filename = function() { 
+      paste0(input$global_subtype, "_", input$sp_gene, "_Pos_", input$sp_position, "_Plot.", tolower(input$sp_plot_format)) 
+    },
+    content = function(file) { 
+      ggsave(file, plot = sp_plot_ggplot(), 
+             device = tolower(input$sp_plot_format), 
+             width = 10, height = 5, dpi = 300) 
+    }
+  )
+  
+  output$sp_aa_table <- renderDT({
+    data <- sp_filtered_data()
+    req(input$sp_group_by)
+    
+    # Select columns to show, including Codon_Usage if present
+    cols_to_show <- c(input$sp_group_by, "AminoAcid", "Count", "Total_in_Group", "Frequency(%)")
+    if("Codon_Usage" %in% colnames(data)) cols_to_show <- c(cols_to_show, "Codon_Usage")
+    
+    datatable(
+      data %>% dplyr::select(all_of(cols_to_show)) %>% arrange(!!sym(input$sp_group_by), desc(`Frequency(%)`)), 
+      options = list(pageLength = 10, autoWidth = TRUE), 
+      rownames = FALSE
+    ) %>% formatRound("Frequency(%)", digits = 2)
+  })
+  
+  output$sp_position_details <- renderUI({
+    req(input$global_subtype, input$sp_gene, input$sp_position)
+    # Only show important sites information in Amino Acid mode
+    if (input$variation_type == "NT") return(NULL)
+    
+    match <- important_pos_df %>% 
+      filter(Subtype == as.character(input$global_subtype), 
+             Gene == as.character(input$sp_gene), 
+             Position == input$sp_position)
+    
+    if(nrow(match) > 0) {
+      wellPanel(style = "background-color: #e3f2fd; border-left: 5px solid #2196f3;",
+                fluidRow(
+                  column(2, strong("Mutation: "), match$Mutation),
+                  column(2, strong("Epitope: "), match$Epitope),
+                  column(2, strong("Impact: "), match$Clinical_impact),
+                  column(4, strong("Source: "), em(match$Source))
+                )
+      )
+    }
+  })
+  
+  output$sp_range_label <- renderUI({
+    req(input$global_subtype, input$sp_gene)
+    
+    gene_max <- current_usage_by_clade() %>% 
+      filter(Group == as.character(input$global_subtype), 
+             Gene == as.character(input$sp_gene)) %>% 
+      pull(Position) %>% 
+      max(na.rm = TRUE)
+    
+    tags$label(paste0(variant_label(), " Position (1 - ", gene_max, "):"), 
+               `for` = "sp_position", 
+               style = "display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50;")
+  })
+  
+  observeEvent(list(input$sp_gene, input$variation_type), {
+    req(input$global_subtype, input$sp_gene)
+    
+    gene_data <- current_usage_by_clade() %>% 
+      filter(Group == as.character(input$global_subtype), 
+             Gene == as.character(input$sp_gene))
+    
+    if(nrow(gene_data) > 0) {
+      max_val <- max(gene_data$Position, na.rm = TRUE)
+      updateNumericInput(session, "sp_position", max = max_val)
+      updateSliderInput(session, "sp_pos_slider", max = max_val)
+      if(input$sp_position > max_val) {
+        updateNumericInput(session, "sp_position", value = max_val)
+      }
+    }
+  })
+  
+  observeEvent(input$sp_pos_plus, {
+    req(input$global_subtype, input$sp_gene)
+    gene_max <- current_usage_by_clade() %>% 
+      filter(Group == as.character(input$global_subtype), Gene == as.character(input$sp_gene)) %>% 
+      pull(Position) %>% max(na.rm = TRUE)
+    
+    new_val <- min(gene_max, input$sp_position + 1)
+    updateNumericInput(session, "sp_position", value = new_val)
+  })
+  
+  observeEvent(input$sp_pos_minus, {
+    new_val <- max(1, input$sp_position - 1)
+    updateNumericInput(session, "sp_position", value = new_val)
+  })
+  
+  observeEvent(list(input$sp_position, input$variation_type), {
+    req(input$global_subtype, input$sp_gene)
+    
+    gene_max <- current_usage_by_clade() %>% 
+      filter(Group == as.character(input$global_subtype), 
+             Gene == as.character(input$sp_gene)) %>% 
+      pull(Position) %>% 
+      max(na.rm = TRUE)
+    
+    if (!is.na(input$sp_position) && input$sp_position > gene_max) {
+      updateNumericInput(session, "sp_position", value = gene_max)
+      showNotification(
+        paste("Maximum position for", input$sp_gene, "is", gene_max),
+        type = "warning",
+        duration = 2
+      )
+    }
+  })
+  
+  # ==========================================
+  # SERVER: TAB 2 - PAIRWISE COMPARISON 
+  # ==========================================
+  
+  clicked_data_val <- reactiveValues(gene = NULL, pos = NULL)
+  
+  get_aggregated_clade <- function(subtype, clade_name, min_freq) {
+    current_usage_by_clade() %>% 
+      filter(Group == subtype, Clade == clade_name) %>% 
+      # NEW: Exclude unknowns and gaps before any aggregation
+      filter(!(AminoAcid %in% c("X", "-"))) %>% 
+      group_by(Gene, Position, AminoAcid) %>%
+      summarise(Variant_Count = sum(Count, na.rm = TRUE), .groups = "drop_last") %>%
+      # Recalculate totals and frequencies based ONLY on valid sequences
+      mutate(
+        Total_Seqs = sum(Variant_Count),
+        Freq = (Variant_Count / Total_Seqs) * 100
+      ) %>%
+      # Select the dominant valid amino acid
+      filter(Freq == max(Freq)) %>%
+      filter(row_number() == 1, Freq >= min_freq) %>%
+      ungroup()
+  }
+  
+  pairwise_differences <- reactive({
+    req(input$pw_clade1, input$pw_clade2, input$global_subtype)
+    if(input$pw_clade1 == input$pw_clade2) return(data.frame())
+    
+    # Fetch dominant AA for Clade 1 (Cleaned of X/-)
+    c1_dom <- get_aggregated_clade(input$global_subtype, input$pw_clade1, input$pw_min_freq) %>%
+      dplyr::select(Gene, Position, Clade1_AA = AminoAcid, Clade1_Freq = Freq)
+    
+    # Fetch dominant AA for Clade 2 (Cleaned of X/-)
+    c2_dom <- get_aggregated_clade(input$global_subtype, input$pw_clade2, input$pw_min_freq) %>%
+      dplyr::select(Gene, Position, Clade2_AA = AminoAcid, Clade2_Freq = Freq)
+    
+    # Join and filter for actual substitutions (e.g., A -> V)
+    inner_join(c1_dom, c2_dom, by = c("Gene", "Position")) %>% 
+      filter(Clade1_AA != Clade2_AA) %>% 
+      arrange(Gene, Position)
+  })
+  
+  output$pw_diff_table <- renderDT({
+    data <- pairwise_differences()
+    if(nrow(data) == 0) return(datatable(data.frame(Message = "No robust differences found."), rownames = FALSE))
+    
+    display_data <- data %>% 
+      mutate(Position = sprintf('<a href="#" onclick="Shiny.setInputValue(\'modal_clicked\', \'%s|%s\', {priority: \'event\'});"><strong>%s</strong></a>', Gene, Position, Position)) %>% 
+      dplyr::rename(`Clade 1 AA` = Clade1_AA, `Clade 1 Freq (%)` = Clade1_Freq, `Clade 2 AA` = Clade2_AA, `Clade 2 Freq (%)` = Clade2_Freq)
+    
+    datatable(display_data, escape = FALSE, options = list(pageLength = 15, autoWidth = TRUE), rownames = FALSE) %>% 
+      formatRound(c("Clade 1 Freq (%)", "Clade 2 Freq (%)"), digits = 2)
+  })
+  
+  observeEvent(input$modal_clicked, {
+    parts <- strsplit(input$modal_clicked, "\\|")[[1]]
+    clicked_data_val$gene <- parts[1]
+    clicked_data_val$pos <- as.numeric(parts[2])
+    
+    showModal(modalDialog(
+      title = paste(variant_label(), "Usage: Gene", clicked_data_val$gene, "- Position", clicked_data_val$pos),
+      size = "l", easyClose = TRUE,
+      fluidRow(
+        column(4, sliderInput("modal_font_size", "Plot Font Size:", min = 10, max = 24, value = 14, step = 1)),
+        column(4, radioButtons("modal_plot_format", "Format:", choices = c("PDF", "PNG"), inline = TRUE)),
+        column(4, downloadButton("downloadModalPlot", "Download Plot", class = "btn-info", style="margin-top: 25px; width: 100%;"))
+      ),
+      plotlyOutput("modal_plot", height = "500px"), 
+      hr(), 
+      DTOutput("modal_table")
+    ))
+  })
+  
+  modal_data <- reactive({ 
+    req(clicked_data_val$gene, clicked_data_val$pos)
+    
+    # Capture variation type once
+    is_aa <- (input$variation_type == "AA")
+    
+    res <- current_usage_by_clade() %>% 
+      filter(Group == input$global_subtype, Gene == clicked_data_val$gene, Position == clicked_data_val$pos) %>%
+      # NEW: Remove "X" and "-" before any calculations
+      filter(!(AminoAcid %in% c("X", "-")))
+      
+    if (nrow(res) == 0) return(res)
+    
+    # Check if Codon_Usage column exists before pipe to avoid dot-reference issues
+    has_codon <- "Codon_Usage" %in% colnames(res)
+    
+    res <- res %>%
+      group_by(Clade, AminoAcid) %>%
+      summarise(
+        Count = sum(Count, na.rm = TRUE), 
+        Codon_Usage = if(has_codon) dplyr::first(Codon_Usage) else NA_character_,
+        .groups = "drop_last"
+      ) %>%
+      # Recalculate the denominator based ONLY on valid amino acids
+      mutate(Total_in_Clade = sum(Count)) %>%
+      mutate(`Frequency(%)` = (Count / Total_in_Clade) * 100) %>%
+      ungroup()
+      
+    # Pre-calculate a clean tooltip text to avoid complex logic inside aes()
+    res <- res %>%
+      mutate(tooltip_text = as.character(paste0(
+        "Clade: ", Clade, 
+        "<br>", if(is_aa) "Amino Acid: " else "Nucleotide: ", AminoAcid, 
+        "<br>Frequency: ", round(!!sym("Frequency(%)"), 2), "%",
+        "<br>Count: ", Count, " / ", Total_in_Clade
+      )))
+      
+    if (has_codon) {
+      res <- res %>%
+        mutate(tooltip_text = as.character(paste0(tooltip_text, "<br>Codons: ", Codon_Usage)))
+    }
+      
+    return(res)
+  })
+  
+  library(ggtext) 
+  
+  modal_plot_ggplot <- reactive({
+    req(input$modal_font_size, input$pw_clade1, input$pw_clade2)
+    data <- modal_data()
+    validate(need(nrow(data) > 0, "No data available."))
+    
+    selected_clades <- c(input$pw_clade1, input$pw_clade2)
+    plot_clades <- sort(unique(data$Clade))
+    
+    html_labels <- ifelse(
+      plot_clades %in% selected_clades, 
+      paste0("<b style='color:red;'>", plot_clades, "</b>"), 
+      plot_clades
+    )
+    names(html_labels) <- plot_clades 
+    
+    ggplot(data, aes(x = Clade, y = !!sym("Frequency(%)"), fill = AminoAcid, group = AminoAcid, 
+                     text = tooltip_text)) + 
+      geom_col(color = "black", size = 0.2) + 
+      scale_fill_manual(values = current_colors(), drop = FALSE) + 
+      scale_y_continuous(expand = c(0,0), limits = c(0, 105)) + 
+      scale_x_discrete(labels = html_labels) + 
+      labs(x = "Clade", y = "Frequency (%)", fill = variant_label()) + 
+      theme_minimal(base_size = input$modal_font_size) + 
+      theme(
+        axis.text.x = element_markdown(angle = 45, hjust = 1, vjust = 1), 
+        axis.title = element_text(face = "bold"), 
+        panel.grid.major.x = element_blank()
+      )
+  })
+  
+  output$modal_plot <- renderPlotly({
+    ggplotly(modal_plot_ggplot(), tooltip = "text") %>%
+      config(displayModeBar = FALSE)
+  })
+  
+  output$downloadModalPlot <- downloadHandler(
+    filename = function() { 
+      paste0(input$global_subtype, "_", clicked_data_val$gene, "_Pos_", clicked_data_val$pos, "_Plot.", tolower(input$modal_plot_format)) 
+    },
+    content = function(file) { 
+      ggsave(file, plot = modal_plot_ggplot(), 
+             device = tolower(input$modal_plot_format), 
+             width = 10, height = 5, dpi = 300) 
+    }
+  )
+  
+  output$modal_table <- renderDT({ 
+    data <- modal_data()
+    cols_to_show <- c("Clade", "AminoAcid", "Count", "Total_in_Clade", "Frequency(%)")
+    if("Codon_Usage" %in% colnames(data)) cols_to_show <- c(cols_to_show, "Codon_Usage")
+    
+    datatable(data %>% dplyr::select(all_of(cols_to_show)) %>% arrange(Clade, desc(`Frequency(%)`)), 
+              options = list(pageLength = 5, autoWidth = TRUE), rownames = FALSE) %>% formatRound("Frequency(%)", digits = 2) 
+  })
+  
+  output$downloadPairwiseCSV <- downloadHandler(
+    filename = function() { paste0("Differences_", input$pw_clade1, "_vs_", input$pw_clade2, ".csv") },
+    content = function(file) { 
+      data <- pairwise_differences()
+      if(nrow(data)>0) data <- data %>% mutate(Group = input$global_subtype) %>% dplyr::select(Group, everything())
+      write_csv(data, file) 
+    }
+  )
+  
+  output$downloadPairwiseExcel <- downloadHandler(
+    filename = function() { paste0("Matrices_", input$pw_clade1, "_vs_", input$pw_clade2, ".xlsx") },
+    content = function(file) {
+      diffs <- pairwise_differences(); wb <- createWorkbook()
+      if(nrow(diffs) == 0) { 
+        addWorksheet(wb, "No Differences"); writeData(wb, "No Differences", "No differences found."); saveWorkbook(wb, file, overwrite = TRUE); return() 
+      }
+      base_df <- data.frame(AminoAcid = if(input$variation_type == "AA") ALL_AAS else c("a","c","g","t","A","C","G","T","N","n","-"))
+      for(i in 1:nrow(diffs)) {
+        r_gene <- diffs$Gene[i]; r_pos <- diffs$Position[i]
+        
+        pos_data <- current_usage_by_clade() %>% 
+          filter(Group == input$global_subtype, Gene == r_gene, Position == r_pos) %>%
+          # Step 1: Remove "X" and "-" before any calculations
+          filter(!(AminoAcid %in% c("X", "-"))) %>%
+          group_by(Clade, AminoAcid) %>% 
+          summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop_last") %>%
+          # Step 2: Recalculate Frequency based only on the sum of valid amino acids per Clade
+          mutate(`Frequency(%)` = (Count / sum(Count)) * 100) %>% 
+          ungroup()
+        
+        sorted_clades <- sort(unique(pos_data$Clade))
+        pct_matrix <- left_join(base_df, pos_data %>% dplyr::select(Clade, AminoAcid, `Frequency(%)`) %>% pivot_wider(names_from = Clade, values_from = `Frequency(%)`, values_fill = 0), by = "AminoAcid")
+        pct_matrix[is.na(pct_matrix)] <- 0; pct_matrix <- pct_matrix[, c("AminoAcid", sorted_clades)]
+        cnt_matrix <- left_join(base_df, pos_data %>% dplyr::select(Clade, AminoAcid, Count) %>% pivot_wider(names_from = Clade, values_from = Count, values_fill = 0), by = "AminoAcid")
+        cnt_matrix[is.na(cnt_matrix)] <- 0; cnt_matrix <- cnt_matrix[, c("AminoAcid", sorted_clades)]
+        
+        sheet_name <- substr(paste(r_gene, "Pos", r_pos), 1, 31); addWorksheet(wb, sheet_name)
+        writeData(wb, sheet_name, "Percentage (%)", startRow=1, startCol=1); writeData(wb, sheet_name, pct_matrix, startRow=2, startCol=1)
+        start_count_row <- 2 + nrow(pct_matrix) + 2; writeData(wb, sheet_name, "Count", startRow=start_count_row, startCol=1); writeData(wb, sheet_name, cnt_matrix, startRow=start_count_row+1, startCol=1)
+        
+        num_cols <- ncol(pct_matrix)
+        addStyle(wb, sheet_name, style = createStyle(numFmt = "0.00"), rows = 3:(2 + nrow(pct_matrix)), cols = 2:num_cols, gridExpand = TRUE)
+        addStyle(wb, sheet_name, style = createStyle(numFmt = "0"), rows = (start_count_row + 2):(start_count_row + 1 + nrow(cnt_matrix)), cols = 2:num_cols, gridExpand = TRUE)
+        conditionalFormatting(wb, sheet_name, cols = 2:num_cols, rows = 3:(2 + nrow(pct_matrix)), style = c("#FFFFFF", "#238B45"), type = "colourScale")
+        headerStyle <- createStyle(textDecoration = "bold"); addStyle(wb, sheet_name, style = headerStyle, rows = c(1, start_count_row), cols = 1); addStyle(wb, sheet_name, style = headerStyle, rows = c(2, start_count_row + 1), cols = 1:num_cols, gridExpand = TRUE)
+        highlight_cols <- which(colnames(pct_matrix) %in% c(input$pw_clade1, input$pw_clade2))
+        if(length(highlight_cols) > 0) addStyle(wb, sheet_name, style = createStyle(fontColour = "#FF0000", textDecoration = "bold"), rows = c(2, start_count_row + 1), cols = highlight_cols, gridExpand = TRUE)
+      }
+      saveWorkbook(wb, file, overwrite = TRUE)
+    }
+  )
+  
+  # ==========================================
+  # SERVER: TAB 3 - ENTROPY LANDSCAPE
+  # ==========================================
+  output$ent_plot_title <- renderText({ 
+    clade_text <- if(input$ent_clade == "All") "All Clades" else paste("Clade", input$ent_clade)
+    mode_text <- if(input$variation_type == "AA") "Amino Acid" else "Nucleotide"
+    paste(mode_text, "Shannon Entropy Landscape - Subtype", input$global_subtype, "| Gene", input$ent_gene, "|", clade_text) 
+  })
+  
+  output$ent_plot <- renderPlotly({
+    req(input$global_subtype, input$ent_gene, input$ent_clade)
+    
+    tmp <- current_usage_by_clade() %>% 
+      filter(Group == input$global_subtype, Gene == input$ent_gene)
+    
+    if (input$ent_clade != "All") {
+      tmp <- tmp %>% filter(Clade == input$ent_clade)
+    }
+    
+    ent_data <- tmp %>%
+      # NEW: Remove "X" and "-" to ensure entropy only measures valid biological variation
+      filter(!(AminoAcid %in% c("X", "-"))) %>%
+      group_by(Position, AminoAcid) %>%
+      summarise(AA_Sum = sum(Count, na.rm = TRUE), .groups = "drop_last") %>%
+      mutate(
+        Pos_Total = sum(AA_Sum),
+        p = AA_Sum / Pos_Total
+      ) %>%
+      filter(p > 0) %>%
+      summarise(Entropy = -sum(p * log2(p)), .groups = "drop")
+    
+    validate(need(nrow(ent_data) > 0, "No data available for these selections after filtering unknowns."))
+    
+    # NT max entropy is 2 bits (log2(4)), AA max is ~4.39 bits (log2(21))
+    y_max <- if(input$variation_type == "AA") log2(21) else 2.0
+    
+    # Define thresholds based on mode
+    mid_thresh <- if(input$variation_type == "AA") 0.2 else 0.1
+    high_thresh <- if(input$variation_type == "AA") 1.0 else 0.5
+    
+    plot_ly(data = ent_data, x = ~Position, y = ~Entropy) %>%
+      add_bars(  
+        marker = list(color = '#2980b9'), 
+        name = "Entropy",
+        hoverinfo = "text",
+        text = ~paste0("Position: ", Position, "<br>Entropy: ", round(Entropy, 4), " bits")
+      ) %>%
+      layout(
+        xaxis = list(title = paste(variant_label(), "Position"), automargin = TRUE),
+        yaxis = list(title = "Shannon Entropy (Bits)", range = c(0, y_max)), 
+        hovermode = "closest",
+        font = list(size = input$ent_font_size),
+        margin = list(l = 60, r = 40, b = 60, t = 40),
+        autosize = TRUE,
+        
+        # ADD HORIZONTAL LINES
+        shapes = list(
+          list(
+            type = "line",
+            x0 = 0, x1 = 1, xref = "paper", # Spans the whole width
+            y0 = mid_thresh, y1 = mid_thresh, yref = "y",
+            line = list(color = "orange", dash = "dash", width = 1.5)
+          ),
+          list(
+            type = "line",
+            x0 = 0, x1 = 1, xref = "paper", 
+            y0 = high_thresh, y1 = high_thresh, yref = "y",
+            line = list(color = "red", dash = "dash", width = 1.5)
+          )
+        ),
+        
+        # ADD LABELS FOR THE LINES
+        annotations = list(
+          list(
+            x = 1, y = mid_thresh + 0.05, xref = "paper", yref = "y",
+            text = "Mid Variant", showarrow = FALSE,
+            xanchor = "right", yanchor = "bottom", 
+            font = list(color = "orange", size = 10)
+          ),
+          list(
+            x = 1, y = high_thresh + 0.05, xref = "paper", yref = "y",
+            text = "High Variant", showarrow = FALSE,
+            xanchor = "right", yanchor = "bottom", 
+            font = list(color = "red", size = 10)
+          )
+        )
+      ) %>%
+      config(displayModeBar = FALSE)
+  })
+  
+  # ==========================================
+  # SERVER: TAB 4 - MUTATION LOLLIPOP
+  # ==========================================
+  output$lol_plot_title <- renderText({ 
+    mode_text <- if(input$variation_type == "AA") "Amino Acid" else "Nucleotide"
+    paste(mode_text, "Mutations in", input$lol_tar_clade, "vs Reference", input$lol_ref_clade, "(Gene", input$lol_gene, ")") 
+  })
+  
+  lol_plot_object <- reactive({
+    req(input$global_subtype, input$lol_gene, input$lol_ref_clade, input$lol_tar_clade)
+    validate(need(input$lol_ref_clade != input$lol_tar_clade, "Reference and Target clades are identical. Please select different clades."))
+    
+    # 1. Fetch Reference Clade Data (c1)
+    c1 <- current_usage_by_clade() %>% 
+      filter(Group == input$global_subtype, Clade == input$lol_ref_clade, Gene == input$lol_gene) %>% 
+      # Step A: Exclude "X" and "-"
+      filter(!(AminoAcid %in% c("X", "-"))) %>%
+      # Step B: Recalculate frequencies based on valid amino acids
+      group_by(Position) %>% 
+      mutate(
+        Valid_Total = sum(Count), 
+        New_Frequency = (Count / Valid_Total) * 100
+      ) %>%
+      # Step C: Find the consensus residue
+      filter(New_Frequency == max(New_Frequency)) %>% 
+      filter(row_number() == 1, New_Frequency >= input$lol_min_freq) %>% 
+      ungroup() %>% 
+      dplyr::select(Position, Ref_AA = AminoAcid)
+    
+    # 2. Fetch Target Clade Data (c2)
+    c2 <- current_usage_by_clade() %>% 
+      filter(Group == input$global_subtype, Clade == input$lol_tar_clade, Gene == input$lol_gene) %>% 
+      # Step A: Exclude "X" and "-"
+      filter(!(AminoAcid %in% c("X", "-"))) %>%
+      # Step B: Recalculate frequencies based on valid amino acids
+      group_by(Position) %>% 
+      mutate(
+        Valid_Total = sum(Count), 
+        New_Frequency = (Count / Valid_Total) * 100
+      ) %>%
+      # Step C: Find the consensus residue
+      filter(New_Frequency == max(New_Frequency)) %>% 
+      filter(row_number() == 1, New_Frequency >= input$lol_min_freq) %>% 
+      ungroup() %>% 
+      dplyr::select(Position, Tar_AA = AminoAcid)
+    
+    muts <- inner_join(c1, c2, by = "Position") %>% 
+      filter(Ref_AA != Tar_AA) %>% 
+      arrange(Position) %>%
+      mutate(
+        Label = paste0(Ref_AA, Position, Tar_AA),
+        Y_Level = rep(c(1.0, 1.4, 1.8, 2.2), length.out = n()),
+        HoverText = paste("Position:", Position, "<br>Mutation:", Label)
+      )
+    
+    validate(need(nrow(muts) > 0, "No fixed mutations found between these clades."))
+    
+    # FIX: Added 'text' to all geoms so Plotly tooltips don't crash when scanning layers
+    ggplot(muts, aes(x = Position, y = Y_Level)) +
+      geom_segment(aes(xend = Position, yend = 0, text = HoverText), color = "gray60", size = 1) +
+      geom_point(aes(fill = Tar_AA, text = HoverText), size = 5, shape = 21, color = "black") +
+      geom_text(aes(y = Y_Level + 0.2, label = Label, text = HoverText), size = input$lol_font_size / 3) +
+      scale_fill_manual(values = current_colors(), drop = FALSE) +
+      scale_y_continuous(limits = c(0, 3.0), breaks = NULL) + 
+      labs(x = paste(variant_label(), "Position"), y = "", fill = paste("New", variant_label())) +
+      theme_minimal(base_size = input$lol_font_size) +
+      theme(axis.title.x = element_text(face = "bold"), panel.grid.minor.y = element_blank(), panel.grid.major.y = element_blank())
+  })
+  
+  output$lol_plot <- renderPlotly({
+    suppressWarnings(ggplotly(lol_plot_object(), tooltip = "text"))
+  })
+  
+  output$downloadLolPlot <- downloadHandler(
+    filename = function() { paste0("Lollipop_", input$lol_ref_clade, "_vs_", input$lol_tar_clade, "_", input$lol_gene, ".", tolower(input$lol_plot_format)) },
+    content = function(file) { ggsave(file, plot = lol_plot_object(), device = tolower(input$lol_plot_format), width = 12, height = 6, dpi = 300) }
+  )
+  
+  # ==========================================
+  # SERVER: TAB 5 - CONSENSUS HEATMAP (msaR)
+  # ==========================================
+  output$heat_plot_title <- renderText({ 
+    mode_text <- if(input$variation_type == "AA") "Amino Acid" else "Nucleotide"
+    paste("Interactive Consensus", mode_text, "MSA - Subtype", input$global_subtype, "| Gene", input$heat_gene) 
+  })
+  
+  output$msa_dynamic_container <- renderUI({
+    req(input$global_subtype)
+    clade_count <- current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Clade) %>% unique() %>% length()
+    
+    if (!is.null(input$show_mut_only) && input$show_mut_only) {
+      clade_count <- clade_count + 1
+    }
+    
+    outer_height <- (clade_count * 20) + 150
+    msaROutput("heat_plot", width = "100%", height = paste0(outer_height, "px"))
+  })
+  
+  output$heat_plot <- renderMsaR({
+    req(input$global_subtype, input$heat_gene)
+    
+    cache_dir <- "data"
+    if (!dir.exists(cache_dir)) dir.create(cache_dir, showWarnings = FALSE)
+    
+    safe_subtype <- gsub("[^A-Za-z0-9_]", "_", input$global_subtype)
+    safe_gene <- gsub("[^A-Za-z0-9_]", "_", input$heat_gene)
+    
+    prefix <- if(input$variation_type == "AA") "MSA_AA_" else "MSA_NT_"
+    # Filename no longer includes minFreq as it is removed
+    aln_filename <- file.path(cache_dir, paste0(prefix, safe_subtype, "_", safe_gene, ".fasta"))
+    
+    if (file.exists(aln_filename)) {
+      if(input$variation_type == "AA") {
+        aligned_strings <- Biostrings::readAAStringSet(aln_filename)
+      } else {
+        aligned_strings <- Biostrings::readDNAStringSet(aln_filename)
+      }
+      original_clade_order <- names(aligned_strings) 
+      
+    } else {
+      # 1. Prepare Base Grid of All Positions and Clades to ensure NO GAPS
+      all_pos_in_gene <- current_usage_by_clade() %>% 
+        filter(Group == input$global_subtype, Gene == input$heat_gene) %>% 
+        pull(Position) %>% unique() %>% sort()
+      
+      all_clades_in_group <- current_usage_by_clade() %>% 
+        filter(Group == input$global_subtype, Gene == input$heat_gene) %>% 
+        pull(Clade) %>% unique() %>% sort()
+      
+      grid <- expand.grid(Clade = all_clades_in_group, Position = all_pos_in_gene, stringsAsFactors = FALSE)
+      
+      # 2. Filter and Identify Majority Character per Position/Clade
+      exclude_chars <- if(input$variation_type == "AA") c("X", "-") else c("N", "n", "-")
+      
+      raw_data <- current_usage_by_clade() %>% 
+        filter(Group == input$global_subtype, Gene == input$heat_gene) %>%
+        # Filter out ambiguous/gaps for calculation
+        filter(!(AminoAcid %in% exclude_chars)) %>% 
+        group_by(Clade, Position, AminoAcid) %>%
+        summarise(Total_Count = sum(Count), .groups = "drop") %>%
+        group_by(Clade, Position) %>%
+        filter(Total_Count == max(Total_Count)) %>%
+        filter(row_number() == 1) %>%
+        ungroup()
+      
+      # 3. Merge with Grid and Fill Gaps with "-"
+      complete_data <- grid %>%
+        left_join(raw_data, by = c("Clade", "Position")) %>%
+        mutate(AminoAcid = ifelse(is.na(AminoAcid), "-", AminoAcid)) %>%
+        arrange(Clade, Position)
+      
+      # 4. Reconstruct the consensus sequences
+      raw_seqs <- complete_data %>%
+        group_by(Clade) %>%
+        summarise(seq = toupper(paste(AminoAcid, collapse = "")), .groups = "drop") %>%
+        arrange(Clade)
+      
+      original_clade_order <- raw_seqs$Clade
+      
+      if(input$variation_type == "AA") {
+        unaligned_strings <- Biostrings::AAStringSet(setNames(raw_seqs$seq, original_clade_order))
+      } else {
+        unaligned_strings <- Biostrings::DNAStringSet(setNames(raw_seqs$seq, original_clade_order))
+      }
+      
+      waiter_show(
+        html = tagList(
+          spin_fading_circles(), 
+          h3(paste("Running ClustalW Alignment for", input$heat_gene, "sequences..."), style = "color: white; margin-top: 20px;")
+        ),
+        color = "rgba(44, 62, 80, 0.9)"
+      )
+      
+      on.exit(waiter_hide(), add = TRUE) 
+      
+      aligned_msa <- suppressMessages(msa::msa(unaligned_strings, method = "ClustalW", order = "input"))
+      
+      if(input$variation_type == "AA") {
+        aligned_strings <- as(aligned_msa, "AAStringSet")
+      } else {
+        aligned_strings <- as(aligned_msa, "DNAStringSet")
+      }
+      aligned_strings <- aligned_strings[original_clade_order]
+      
+      Biostrings::writeXStringSet(aligned_strings, filepath = aln_filename)
+      
+    } 
+    
+    if (input$show_mut_only) {
+      seq_char_matrix <- as.matrix(aligned_strings)
+      exclude_chars <- if(input$variation_type == "AA") c("X", "-") else c("N", "n", "-")
+      
+      consensus_seq <- apply(seq_char_matrix, 2, function(col) {
+        # Filter out X/- or N/- before finding the majority
+        valid_col <- col[!(toupper(col) %in% toupper(exclude_chars))]
+        if(length(valid_col) == 0) return("-") # Fallback if all are ambiguous
+        freqs <- table(valid_col)
+        names(freqs)[which.max(freqs)] 
+      })
+      
+      for (i in 1:nrow(seq_char_matrix)) {
+        match_idx <- seq_char_matrix[i, ] == consensus_seq
+        seq_char_matrix[i, match_idx] <- "."
+      }
+      
+      consensus_string <- paste(consensus_seq, collapse = "")
+      new_seqs <- apply(seq_char_matrix, 1, paste, collapse = "")
+      
+      if(input$variation_type == "AA") {
+        final_strings <- Biostrings::AAStringSet(c(Consensus = consensus_string, new_seqs[original_clade_order]))
+      } else {
+        final_strings <- Biostrings::DNAStringSet(c(Consensus = consensus_string, new_seqs[original_clade_order]))
+      }
+      
+    } else {
+      final_strings <- aligned_strings
+    }
+    
+    inner_align_height <- (length(final_strings) * 20) + 20
+    
+    msaR(
+      final_strings, 
+      menu = TRUE, 
+      overviewbox = FALSE, 
+      seqlogo = !isTRUE(input$show_mut_only), 
+      colorscheme = if(input$variation_type == "AA") "clustal" else "nucleotide",
+      alignmentHeight = inner_align_height
+    )
+  })
+}
