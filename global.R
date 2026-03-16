@@ -20,8 +20,8 @@ library(shinyjs)
 # ==========================================
 # 1. GLOBAL DATA LOADING & SETUP
 # ==========================================
-# RDS cache paths — one file bundles all heavy data objects
-RDS_CACHE <- "data/app_cache_flu.rds"
+# Version 2: Fixed Neuraminidase (NA) protein loading
+RDS_CACHE <- "data/app_cache_flu_v2.rds"
 
 # Subtypes to load
 SUBTYPES <- c("H1N1", "H3N2")
@@ -66,8 +66,8 @@ if (!cache_loaded) {
     meta_path <- paste0("data/", subtype, "/metadata_merged_annotated.csv")
     if (file.exists(meta_path)) {
       message("Loading metadata for ", subtype)
-      # Load only necessary columns to keep memory low
-      meta <- read_csv(meta_path, show_col_types = FALSE, 
+      # CRITICAL: na = character() ensures 'NA' (Neuraminidase) is NOT treated as a missing value
+      meta <- read_csv(meta_path, show_col_types = FALSE, na = character(),
                        col_select = c("Isolate_Id", "Subtype", "Collection_Date", "Location", 
                                       "HA_clade", "NA_clade", "HA_subclade"))
       
@@ -112,16 +112,17 @@ if (!cache_loaded) {
     message("Loading usage tables for ", subtype)
     
     # AA tables
-    aa_clade <- read_csv(paste0("data/", subtype, "/AA/aa_usage_by_HA_clade.csv"), show_col_types = FALSE) %>%
+    # CRITICAL: na = character() ensures 'NA' protein is not interpreted as missing
+    aa_clade <- read_csv(paste0("data/", subtype, "/AA/aa_usage_by_HA_clade.csv"), show_col_types = FALSE, na = character()) %>%
       dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
       dplyr::rename_with(~ gsub("^HA_clade$", "Clade", .x), any_of("HA_clade")) %>%
       mutate(Group = subtype)
     
-    aa_year <- read_csv(paste0("data/", subtype, "/AA/aa_usage_by_Year.csv"), show_col_types = FALSE) %>%
+    aa_year <- read_csv(paste0("data/", subtype, "/AA/aa_usage_by_Year.csv"), show_col_types = FALSE, na = character()) %>%
       dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
       mutate(Group = subtype)
       
-    aa_ym <- read_csv(paste0("data/", subtype, "/AA/aa_usage_by_Year_Month.csv"), show_col_types = FALSE) %>%
+    aa_ym <- read_csv(paste0("data/", subtype, "/AA/aa_usage_by_Year_Month.csv"), show_col_types = FALSE, na = character()) %>%
       dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
       mutate(Group = subtype)
     
@@ -130,18 +131,18 @@ if (!cache_loaded) {
     aa_ym_list[[subtype]]    <- aa_ym
     
     # NT tables
-    nt_clade <- read_csv(paste0("data/", subtype, "/NT/nt_usage_by_HA_clade.csv"), show_col_types = FALSE) %>%
+    nt_clade <- read_csv(paste0("data/", subtype, "/NT/nt_usage_by_HA_clade.csv"), show_col_types = FALSE, na = character()) %>%
       dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
       dplyr::rename_with(~ gsub("^HA_clade$", "Clade", .x), any_of("HA_clade")) %>%
       dplyr::rename_with(~ gsub("^Nucleotide$", "AminoAcid", .x), any_of("Nucleotide")) %>%
       mutate(Group = subtype)
     
-    nt_year <- read_csv(paste0("data/", subtype, "/NT/nt_usage_by_Year.csv"), show_col_types = FALSE) %>%
+    nt_year <- read_csv(paste0("data/", subtype, "/NT/nt_usage_by_Year.csv"), show_col_types = FALSE, na = character()) %>%
       dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
       dplyr::rename_with(~ gsub("^Nucleotide$", "AminoAcid", .x), any_of("Nucleotide")) %>%
       mutate(Group = subtype)
       
-    nt_ym <- read_csv(paste0("data/", subtype, "/NT/nt_usage_by_Year_Month.csv"), show_col_types = FALSE) %>%
+    nt_ym <- read_csv(paste0("data/", subtype, "/NT/nt_usage_by_Year_Month.csv"), show_col_types = FALSE, na = character()) %>%
       dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
       dplyr::rename_with(~ gsub("^Nucleotide$", "AminoAcid", .x), any_of("Nucleotide")) %>%
       mutate(Group = subtype)
