@@ -147,8 +147,16 @@ server <- function(input, output, session) {
     paste(min(metadata_global$Year, na.rm=T), "-", max(metadata_global$Year, na.rm=T)) 
   })
   
+  stats_metadata_filtered <- reactive({
+    req(input$stats_year_range)
+    major_continents <- c("Africa", "Asia", "Europe", "North America", "South America", "Oceania")
+    metadata_global %>%
+      filter(Year >= input$stats_year_range[1], Year <= input$stats_year_range[2]) %>%
+      filter(region %in% major_continents)
+  })
+
   output$stats_time_plot <- renderPlotly({
-    p <- metadata_global %>%
+    p <- stats_metadata_filtered() %>%
       group_by(Year, Group) %>%
       summarise(Count = n(), .groups = "drop") %>%
       ggplot(aes(x = Year, y = Count, fill = Group, group = Group, 
@@ -169,34 +177,33 @@ server <- function(input, output, session) {
   })
   
   output$stats_geo_plot <- renderPlotly({
-    p <- metadata_global %>%
+    p <- stats_metadata_filtered() %>%
       group_by(region) %>%
       summarise(Count = n(), .groups = "drop") %>%
-      mutate(region_ord = reorder(region, Count)) %>% # FIX: Evaluated reorder outside of aes()
-      ggplot(aes(x = region_ord, y = Count, fill = region, group = region, # FIX: Added group
+      mutate(region_ord = reorder(region, Count)) %>% 
+      ggplot(aes(x = region_ord, y = Count, fill = region, group = region, 
                  text = paste0("Region: ", region, "<br>Count: ", Count))) +
-      geom_col() + 
-      scale_fill_viridis_d(option = "mako") + 
+      geom_col() +
+      scale_fill_viridis_d(option = "mako") +
       theme_minimal(base_size = 14) +
       labs(x = "Region", y = "Count") +
       theme(
-        axis.text.x = element_text(face = "bold"), 
+        axis.text.x = element_text(face = "bold"),
         axis.text.y = element_text(face = "bold"),
-        legend.position = "none" 
+        legend.position = "none"
       )
-    
+
     ggplotly(p, tooltip = "text") %>% 
       layout(showlegend = FALSE) %>% 
       config(displayModeBar = FALSE)
   })
-  
+
   output$stats_clade_plot <- renderPlotly({
     req(input$clade_plot_x, input$clade_plot_fill)
-    
-    summary_df <- metadata_global %>%
+
+    summary_df <- stats_metadata_filtered() %>%
       group_by(!!sym(input$clade_plot_x), !!sym(input$clade_plot_fill)) %>%
-      summarise(Count = n(), .groups = "drop")
-    
+      summarise(Count = n(), .groups = "drop")    
     validate(need(nrow(summary_df) > 0, "No data available for the current filters."))
     
     fill_items <- unique(summary_df[[input$clade_plot_fill]])

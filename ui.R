@@ -156,8 +156,13 @@ ui <- navbarPage(
                  column(2, selectInput("map_geo_level", "Grouping:", choices = c("Region", "Country"))),
                  column(2, selectInput("map_clade_type", "Pie Data:", choices = c("HA-Clade" = "clade", "NA-Clade" = "G_clade"))),
                  column(3, selectInput("map_year", "Select Year:", choices = c("All", sort(na.omit(unique(metadata_global$Year)), decreasing = TRUE)))),
-                 column(5, style = "margin-top: 25px;", helpText("Global FLU Distribution Analysis. Subtype is controlled globally from the top right."))
-               )
+                 column(5, sliderInput("stats_year_range", "Plot Year Range:", 
+                                       min = 1918, 
+                                       max = as.numeric(format(Sys.Date(), "%Y")), 
+                                       value = c(1968, as.numeric(format(Sys.Date(), "%Y"))), 
+                                       sep = "", step = 1))
+               ),
+               helpText("Note: 'Select Year' affects the Map, while 'Plot Year Range' affects the charts below.")
              ),
              
              fluidRow(
