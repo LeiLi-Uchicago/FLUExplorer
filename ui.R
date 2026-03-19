@@ -292,7 +292,8 @@ ui <- navbarPage(
                        tags$style(HTML("#sp_position { margin-bottom: 0px !important; height: 34px; text-align: center; }")),
                        numericInput("sp_position", label = NULL, value = 1, min = 1, max = 1000)
                    ),
-                   actionButton("sp_pos_plus", "+", class = "btn-primary", style = "padding: 6px 12px; font-weight: bold; height: 34px;")
+                   actionButton("sp_pos_plus", "+", class = "btn-primary", style = "padding: 6px 12px; font-weight: bold; height: 34px;"),
+                   uiOutput("sp_numbering_label")
                ),
                sliderInput("sp_min_seqs", "Min Seqs:", min = 1, max = 500, value = 5),
                sliderInput("sp_font_size", "Plot Font Size:", min = 10, max = 24, value = 14),

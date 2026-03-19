@@ -341,12 +341,24 @@ server <- function(input, output, session) {
     
     # Pre-calculate tooltip text
     data <- data %>%
-      mutate(tooltip_text = paste0(
-        group_col, ": ", !!sym(group_col), 
-        "<br>", if(is_aa) "Amino Acid: " else "Nucleotide: ", AminoAcid, 
-        "<br>Count: ", Count, " / ", Valid_Total,
-        "<br>Frequency: ", round(`Frequency(%)`, 2), "%"
-      ))
+      mutate(
+        numbering_text = case_when(
+          is_aa & input$sp_gene == "HA" & input$global_subtype == "H3N2" & Position <= 16 ~ " (Signal Peptide)",
+          is_aa & input$sp_gene == "HA" & input$global_subtype == "H3N2" & Position > 16 & Position <= 345 ~ paste0(" (H3 HA1: ", Position - 16, ")"),
+          is_aa & input$sp_gene == "HA" & input$global_subtype == "H3N2" & Position > 345 ~ paste0(" (H3 HA2: ", Position - 345, ")"),
+          is_aa & input$sp_gene == "HA" & input$global_subtype == "H1N1" & Position <= 17 ~ " (Signal Peptide)",
+          is_aa & input$sp_gene == "HA" & input$global_subtype == "H1N1" & Position > 17 & Position <= 344 ~ paste0(" (H1 HA1: ", Position - 17, ")"),
+          is_aa & input$sp_gene == "HA" & input$global_subtype == "H1N1" & Position > 344 ~ paste0(" (H1 HA2: ", Position - 344, ")"),
+          TRUE ~ ""
+        ),
+        tooltip_text = paste0(
+          group_col, ": ", !!sym(group_col), 
+          "<br>Position: ", Position, numbering_text,
+          "<br>", if(is_aa) "Amino Acid: " else "Nucleotide: ", AminoAcid, 
+          "<br>Count: ", Count, " / ", Valid_Total,
+          "<br>Frequency: ", round(`Frequency(%)`, 2), "%"
+        )
+      )
     
     if (has_codon) {
       data <- data %>%
@@ -435,6 +447,33 @@ server <- function(input, output, session) {
     tags$label(paste0(variant_label(), " Position (1 - ", gene_max, "):"), 
                `for` = "sp_position", 
                style = "display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50;")
+  })
+  
+  output$sp_numbering_label <- renderUI({
+    req(input$global_subtype, input$sp_gene, input$sp_position, input$variation_type)
+    
+    # Only calculate structural numbering for Amino Acids in the HA gene
+    if (input$variation_type == "AA" && input$sp_gene == "HA") {
+      pos <- input$sp_position
+      if (input$global_subtype == "H3N2") {
+        if (pos <= 16) {
+          return(span("(Signal Peptide)", style = "margin-left: 10px; color: #7f8c8d; font-style: italic;"))
+        } else if (pos <= 345) {
+          return(span(paste0("(H3 HA1: ", pos - 16, ")"), style = "margin-left: 10px; color: #e74c3c; font-weight: bold;"))
+        } else {
+          return(span(paste0("(H3 HA2: ", pos - 345, ")"), style = "margin-left: 10px; color: #e74c3c; font-weight: bold;"))
+        }
+      } else if (input$global_subtype == "H1N1") {
+        if (pos <= 17) {
+          return(span("(Signal Peptide)", style = "margin-left: 10px; color: #7f8c8d; font-style: italic;"))
+        } else if (pos <= 344) {
+          return(span(paste0("(H1 HA1: ", pos - 17, ")"), style = "margin-left: 10px; color: #e74c3c; font-weight: bold;"))
+        } else {
+          return(span(paste0("(H1 HA2: ", pos - 344, ")"), style = "margin-left: 10px; color: #e74c3c; font-weight: bold;"))
+        }
+      }
+    }
+    return(NULL)
   })
   
   observeEvent(list(input$sp_gene, input$variation_type), {
@@ -591,12 +630,24 @@ server <- function(input, output, session) {
       
     # Pre-calculate a clean tooltip text to avoid complex logic inside aes()
     res <- res %>%
-      mutate(tooltip_text = as.character(paste0(
-        "Clade: ", Clade, 
-        "<br>", if(is_aa) "Amino Acid: " else "Nucleotide: ", AminoAcid, 
-        "<br>Frequency: ", round(!!sym("Frequency(%)"), 2), "%",
-        "<br>Count: ", Count, " / ", Total_in_Clade
-      )))
+      mutate(
+        numbering_text = case_when(
+          is_aa & clicked_data_val$gene == "HA" & input$global_subtype == "H3N2" & clicked_data_val$pos <= 16 ~ " (Signal Peptide)",
+          is_aa & clicked_data_val$gene == "HA" & input$global_subtype == "H3N2" & clicked_data_val$pos > 16 & clicked_data_val$pos <= 345 ~ paste0(" (H3 HA1: ", clicked_data_val$pos - 16, ")"),
+          is_aa & clicked_data_val$gene == "HA" & input$global_subtype == "H3N2" & clicked_data_val$pos > 345 ~ paste0(" (H3 HA2: ", clicked_data_val$pos - 345, ")"),
+          is_aa & clicked_data_val$gene == "HA" & input$global_subtype == "H1N1" & clicked_data_val$pos <= 17 ~ " (Signal Peptide)",
+          is_aa & clicked_data_val$gene == "HA" & input$global_subtype == "H1N1" & clicked_data_val$pos > 17 & clicked_data_val$pos <= 344 ~ paste0(" (H1 HA1: ", clicked_data_val$pos - 17, ")"),
+          is_aa & clicked_data_val$gene == "HA" & input$global_subtype == "H1N1" & clicked_data_val$pos > 344 ~ paste0(" (H1 HA2: ", clicked_data_val$pos - 344, ")"),
+          TRUE ~ ""
+        ),
+        tooltip_text = as.character(paste0(
+          "Clade: ", Clade, 
+          "<br>Position: ", clicked_data_val$pos, numbering_text,
+          "<br>", if(is_aa) "Amino Acid: " else "Nucleotide: ", AminoAcid, 
+          "<br>Frequency: ", round(!!sym("Frequency(%)"), 2), "%",
+          "<br>Count: ", Count, " / ", Total_in_Clade
+        ))
+      )
       
     if (has_codon) {
       res <- res %>%
