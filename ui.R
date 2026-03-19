@@ -273,6 +273,7 @@ ui <- navbarPage(
              sidebarPanel(
                h5("Setting", style="font-weight: bold; color: #2980b9;"),
                selectInput("sp_group_by", "Group by:", choices = c("Clade", "Year", "Year-Month" = "Year_Month")),
+               checkboxInput("sp_hide_empty_years", "Hide years without records (when Group by Year)", value = TRUE), #
                checkboxInput("sp_show_counts", "Show raw counts instead of percentage", value = FALSE),
                hr(),
                div(id = "sp_quick_access_section",

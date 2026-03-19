@@ -21,7 +21,7 @@ library(shinyjs)
 # 1. GLOBAL DATA LOADING & SETUP
 # ==========================================
 # Version 2: Fixed Neuraminidase (NA) protein loading
-RDS_CACHE <- "data/app_cache_flu_v2.rds"
+RDS_CACHE <- "data/app_cache_flu.rds"
 
 # Subtypes to load
 SUBTYPES <- c("H1N1", "H3N2")

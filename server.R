@@ -266,27 +266,35 @@ server <- function(input, output, session) {
                    "Year" = current_usage_by_year(),
                    "Year_Month" = current_usage_by_year_month())
     
-    # 1. Basic filtering and removal of "X" and "-"
+    # 1. Basic filtering by gene, position, subtype
     filtered <- data %>% 
       filter(Group == subtype, Gene == gene, Position == pos) %>%
-      filter(!(AminoAcid %in% c("X", "-"))) %>% 
-      filter(Total_in_Group >= input$sp_min_seqs)
+      # 2. Filter out "X" and "-"
+      filter(!(AminoAcid %in% c("X", "-")))
     
-    # 2. Recalculate frequencies based on remaining valid sequences
+    # 3. Recalculate totals and frequencies based on remaining valid sequences
     # This ensures your plot bars correctly represent 100% of the available data
     filtered <- filtered %>%
       group_by(across(all_of(group_col))) %>%
       mutate(
-        Valid_Total = sum(Count),
+        Valid_Total = sum(Count), # This is the total count of valid AAs/NTs for the group
         `Frequency(%)` = (Count / Valid_Total) * 100
       ) %>%
       ungroup()
     
-    # 3. Clean up temporal metadata if necessary
+    # 4. Apply minimum sequences filter based on Valid_Total
+    filtered <- filtered %>% filter(Valid_Total >= input$sp_min_seqs)
+    
+    # 5. Clean up temporal metadata if necessary
     if (group_col == "Year_Month") {
       filtered <- filtered %>% filter(Year_Month != "Unknown")
     } else if (group_col == "Year") {
       filtered <- filtered %>% filter(Year != "Unknown")
+    }
+    
+    # 6. Optionally hide years without records (Valid_Total > 0)
+    if (group_col == "Year" && input$sp_hide_empty_years) {
+      filtered <- filtered %>% filter(Valid_Total > 0)
     }
     
     return(filtered)
@@ -312,12 +320,23 @@ server <- function(input, output, session) {
       scale_y_continuous(expand = c(0, 0), limits = c(0, 105))  
     }
     
-    x_scale <- if(group_col == "Year_Month") {
+    # Enforce correct data type for X-axis to properly show or hide gaps
+    if (group_col == "Year") {
+      if (input$sp_hide_empty_years) {
+        # Treat as categorical to hide gaps
+        data[[group_col]] <- as.character(data[[group_col]])
+        x_scale <- scale_x_discrete()
+      } else {
+        # Treat as continuous to show gaps naturally
+        data[[group_col]] <- as.numeric(as.character(data[[group_col]]))
+        x_scale <- scale_x_continuous(breaks = function(x) unique(floor(pretty(seq(min(x, na.rm=TRUE), max(x, na.rm=TRUE))))))
+      }
+    } else if (group_col == "Year_Month") {
       all_yms <- sort(unique(data[[group_col]]))
       # Select every 6th label to avoid overlapping on the x-axis
-      scale_x_discrete(breaks = all_yms[seq(1, length(all_yms), by = 6)])
+      x_scale <- scale_x_discrete(breaks = all_yms[seq(1, length(all_yms), by = 6)])
     } else {
-      scale_x_discrete()
+      x_scale <- scale_x_discrete()
     }
     
     # Pre-calculate tooltip text
@@ -325,7 +344,7 @@ server <- function(input, output, session) {
       mutate(tooltip_text = paste0(
         group_col, ": ", !!sym(group_col), 
         "<br>", if(is_aa) "Amino Acid: " else "Nucleotide: ", AminoAcid, 
-        "<br>Count: ", Count, " / ", Total_in_Group,
+        "<br>Count: ", Count, " / ", Valid_Total,
         "<br>Frequency: ", round(`Frequency(%)`, 2), "%"
       ))
     
@@ -372,7 +391,7 @@ server <- function(input, output, session) {
     req(input$sp_group_by)
     
     # Select columns to show, including Codon_Usage if present
-    cols_to_show <- c(input$sp_group_by, "AminoAcid", "Count", "Total_in_Group", "Frequency(%)")
+    cols_to_show <- c(input$sp_group_by, "AminoAcid", "Count", "Valid_Total", "Frequency(%)")
     if("Codon_Usage" %in% colnames(data)) cols_to_show <- c(cols_to_show, "Codon_Usage")
     
     datatable(
