@@ -12,8 +12,8 @@ library(msa)
 library(waiter)
 library(lubridate)
 library(tidyverse)
-library(leaflet)             # Fixes: could not find function "leafletOutput"
-library(leaflet.minicharts)  # Required for the pie charts on the map
+# library(leaflet)             # Fixes: could not find function "leafletOutput"
+# library(leaflet.minicharts)  # Required for the pie charts on the map
 library(shinyWidgets)
 library(shinyjs)
 
@@ -191,6 +191,42 @@ if (!cache_loaded) {
     file = RDS_CACHE
   )
 }
+
+# ==========================================
+# 2. COORDINATE LOOKUP DATA (Pre-calculated for Performance)
+# ==========================================
+# region_coords <- data.frame(
+#   region = c("Africa", "Asia", "Europe", "North America", "South America", "Oceania"),
+#   lat = c(1.0, 34.0, 48.0, 45.0, -15.0, -25.0),
+#   lng = c(17.0, 100.0, 10.0, -100.0, -60.0, 135.0),
+#   stringsAsFactors = FALSE
+# )
+# 
+# # Move world_coords out of server.R to global.R to avoid recalculation on every session
+# # ggplot2::map_data is slow, so we do it once here.
+# message("Pre-calculating world coordinates...")
+# world_coords <- ggplot2::map_data("world") %>%
+#   dplyr::group_by(region) %>%
+#   dplyr::summarise(lat = mean(lat), lng = mean(long), .groups = "drop") %>%
+#   dplyr::rename(country = region)
+
+# ==========================================
+# 3. PRE-AGGREGATED DATA FOR FAST PLOTTING
+# ==========================================
+# This avoids processing the full metadata_global (hundreds of thousands of rows) 
+# inside reactive contexts which causes UI lag.
+message("Pre-aggregating metadata statistics...")
+metadata_summary_stats <- metadata_global %>%
+  group_by(Year, Group, region, country, clade, G_clade) %>%
+  summarise(n = n(), .groups = "drop")
+
+# Pre-calculate summary box values
+total_countries_val <- length(unique(metadata_global$country))
+time_range_val <- paste(min(metadata_global$Year, na.rm=T), "-", max(metadata_global$Year, na.rm=T))
+
+# Pre-calculate choices for dropdowns to speed up UI generation
+metadata_groups <- sort(na.omit(unique(metadata_global$Group)))
+metadata_years <- sort(na.omit(unique(metadata_global$Year)), decreasing = TRUE)
 
 # ---- Post-load steps ----
 ALL_AAS <- c("A","C","D","E","F","G","H","I","K","L","M","N","P","Q","R","S","T","V","W","Y","*","X", "-")

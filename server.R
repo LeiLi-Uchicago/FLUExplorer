@@ -67,90 +67,76 @@ server <- function(input, output, session) {
   # SERVER: TAB 1 - STATS (Map & Static Plots)
   # ==========================================
   
-  # 1. COORDINATE LOOKUP DATA
-  region_coords <- data.frame(
-    region = c("Africa", "Asia", "Europe", "North America", "South America", "Oceania"),
-    lat = c(1.0, 34.0, 48.0, 45.0, -15.0, -25.0),
-    lng = c(17.0, 100.0, 10.0, -100.0, -60.0, 135.0),
-    stringsAsFactors = FALSE
-  )
-  
-  world_coords <- ggplot2::map_data("world") %>%
-    dplyr::group_by(region) %>%
-    dplyr::summarise(lat = mean(lat), lng = mean(long), .groups = "drop") %>%
-    dplyr::rename(country = region) 
-  
   output$total_seqs <- renderText({ paste0(total_raw) })
-  
+  output$total_countries <- renderText({ paste0(total_countries_val) })
+  output$time_range <- renderText({ time_range_val })
+
   # --- REACTIVE MAP DATA ---
-  map_data_filtered <- reactive({
-    req(input$global_subtype, input$map_geo_level, input$map_clade_type, input$map_year)
-    
-    plot_df <- metadata_global
-    
-    if(input$global_subtype != "All") {
-      plot_df <- plot_df %>% filter(Group == input$global_subtype)
-    }
-    if(input$map_year != "All") {
-      plot_df <- plot_df %>% filter(Year == input$map_year)
-    }
-    
-    geo_col <- if(input$map_geo_level == "Region") "region" else "country"
-    clade_col <- if(input$map_clade_type == "clade") "clade" else "G_clade"
-    
-    summary_df <- plot_df %>%
-      filter(!!sym(clade_col) != "" & !is.na(!!sym(clade_col))) %>%
-      group_by(!!sym(geo_col), !!sym(clade_col)) %>%
-      summarise(n = n(), .groups = "drop") %>%
-      tidyr::pivot_wider(names_from = !!sym(clade_col), values_from = n, values_fill = 0)
-    
-    if(input$map_geo_level == "Region") {
-      res <- inner_join(summary_df, region_coords, by = "region")
-    } else {
-      res <- inner_join(summary_df, world_coords, by = c("country" = "country"))
-    }
-    
-    return(as.data.frame(res))
-  })
-  
-  # --- RENDER MAP ---
-  output$world_map <- renderLeaflet({
-    data <- map_data_filtered()
-    validate(need(nrow(data) > 0, "No data available for the selected filters."))
-    
-    geo_col_name <- if(input$map_geo_level == "Region") "region" else "country"
-    
-    chart_cols <- sort(setdiff(colnames(data), c(geo_col_name, "lat", "lng")))
-    
-    active_colors <- if(input$map_clade_type == "clade") {
-      as.character(clade_colors_vec[chart_cols])
-    } else {
-      as.character(g_clade_colors_vec[chart_cols])
-    }
-    
-    leaflet(data) %>%
-      addProviderTiles(providers$CartoDB.Positron) %>%
-      setView(lng = 10, lat = 15, zoom = 2) %>% 
-      addMinicharts(
-        data$lng, data$lat,
-        type = "pie",
-        chartdata = data[, chart_cols],
-        colorPalette = active_colors, 
-        width = 45, 
-        transitionTime = 0,
-        showLabels = FALSE
-      )
-  })
-  
-  output$total_countries <- renderText({ length(unique(metadata_global$country)) })
-  output$time_range <- renderText({ 
-    paste(min(metadata_global$Year, na.rm=T), "-", max(metadata_global$Year, na.rm=T)) 
-  })
-  
+  # map_data_filtered <- reactive({
+  #   req(input$global_subtype, input$map_geo_level, input$map_clade_type, input$map_year)
+  #   
+  #   # PERFORMANCE: use pre-aggregated summary instead of full metadata_global
+  #   plot_df <- metadata_summary_stats
+  #   
+  #   if(input$global_subtype != "All") {
+  #     plot_df <- plot_df %>% filter(Group == input$global_subtype)
+  #   }
+  #   if(input$map_year != "All") {
+  #     plot_df <- plot_df %>% filter(Year == input$map_year)
+  #   }
+  #   
+  #   geo_col <- if(input$map_geo_level == "Region") "region" else "country"
+  #   clade_col <- if(input$map_clade_type == "clade") "clade" else "G_clade"
+  #   
+  #   summary_df <- plot_df %>%
+  #     filter(!!sym(clade_col) != "" & !is.na(!!sym(clade_col))) %>%
+  #     group_by(!!sym(geo_col), !!sym(clade_col)) %>%
+  #     summarise(n = sum(n), .groups = "drop") %>% # use sum(n) because it's pre-aggregated
+  #     tidyr::pivot_wider(names_from = !!sym(clade_col), values_from = n, values_fill = 0)
+  #   
+  #   if(input$map_geo_level == "Region") {
+  #     res <- inner_join(summary_df, region_coords, by = "region")
+  #   } else {
+  #     res <- inner_join(summary_df, world_coords, by = c("country" = "country"))
+  #   }
+  #   
+  #   return(as.data.frame(res))
+  # })
+  # 
+  # # --- RENDER MAP ---
+  # output$world_map <- renderLeaflet({
+  #   data <- map_data_filtered()
+  #   validate(need(nrow(data) > 0, "No data available for the selected filters."))
+  # 
+  #   geo_col_name <- if(input$map_geo_level == "Region") "region" else "country"
+  # 
+  #   chart_cols <- sort(setdiff(colnames(data), c(geo_col_name, "lat", "lng")))
+  # 
+  #   active_colors <- if(input$map_clade_type == "clade") {
+  #     as.character(clade_colors_vec[chart_cols])
+  #   } else {
+  #     as.character(g_clade_colors_vec[chart_cols])
+  #   }
+  # 
+  #   leaflet(data) %>%
+  #     addProviderTiles(providers$CartoDB.Positron) %>%
+  #     setView(lng = 10, lat = 15, zoom = 2) %>%
+  #     addMinicharts(
+  #       data$lng, data$lat,
+  #       type = "pie",
+  #       chartdata = data[, chart_cols],
+  #       colorPalette = active_colors,
+  #       width = 45,
+  #       transitionTime = 0,
+  #       showLabels = FALSE
+  #     )
+  # })
+
   stats_metadata_filtered <- reactive({
     req(input$stats_year_range)
     major_continents <- c("Africa", "Asia", "Europe", "North America", "South America", "Oceania")
-    metadata_global %>%
+    # PERFORMANCE: use pre-aggregated summary instead of full metadata_global
+    metadata_summary_stats %>%
       filter(Year >= input$stats_year_range[1], Year <= input$stats_year_range[2]) %>%
       filter(region %in% major_continents)
   })
@@ -158,7 +144,7 @@ server <- function(input, output, session) {
   output$stats_time_plot <- renderPlotly({
     p <- stats_metadata_filtered() %>%
       group_by(Year, Group) %>%
-      summarise(Count = n(), .groups = "drop") %>%
+      summarise(Count = sum(n), .groups = "drop") %>%
       ggplot(aes(x = Year, y = Count, fill = Group, group = Group, 
                  text = paste0("Year: ", Year,
                                "<br>Subtype: ", Group,
@@ -175,11 +161,11 @@ server <- function(input, output, session) {
     ggplotly(p, tooltip = "text") %>% 
       config(displayModeBar = FALSE)
   })
-  
+
   output$stats_geo_plot <- renderPlotly({
     p <- stats_metadata_filtered() %>%
       group_by(region) %>%
-      summarise(Count = n(), .groups = "drop") %>%
+      summarise(Count = sum(n), .groups = "drop") %>%
       mutate(region_ord = reorder(region, Count)) %>% 
       ggplot(aes(x = region_ord, y = Count, fill = region, group = region, 
                  text = paste0("Region: ", region, "<br>Count: ", Count))) +
@@ -203,7 +189,8 @@ server <- function(input, output, session) {
 
     summary_df <- stats_metadata_filtered() %>%
       group_by(!!sym(input$clade_plot_x), !!sym(input$clade_plot_fill)) %>%
-      summarise(Count = n(), .groups = "drop")    
+      summarise(Count = sum(n), .groups = "drop")
+    
     validate(need(nrow(summary_df) > 0, "No data available for the current filters."))
     
     fill_items <- unique(summary_df[[input$clade_plot_fill]])
