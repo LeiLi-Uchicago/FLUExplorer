@@ -17,6 +17,9 @@ library(tidyverse)
 library(shinyWidgets)
 library(shinyjs)
 
+# Disable scientific notation for the session
+options(scipen = 999)
+
 # ==========================================
 # 1. GLOBAL DATA LOADING & SETUP
 # ==========================================

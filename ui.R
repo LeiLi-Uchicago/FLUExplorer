@@ -14,6 +14,13 @@ ui <- navbarPage(
   header = tags$head(
     tags$link(rel = "shortcut icon", href = "app_icon_round.png"), 
     use_waiter(), 
+    waiter_show_on_load(
+      html = tagList(
+        spin_fading_circles(), 
+        h3("Influenza Divergence Explorer is Loading...", style = "color: white; margin-top: 20px;")
+      ),
+      color = "#2c3e50"
+    ),
     shinyjs::useShinyjs(),
     tags$style(HTML("
       @media (min-width: 768px) { 
@@ -176,11 +183,11 @@ ui <- navbarPage(
              fluidRow(
                column(6, 
                       h4("Sequencing Over Time (Seasonality)", style="font-weight: bold; margin-top: 20px;"),
-                      plotlyOutput("stats_time_plot", height = "400px")
+                      withWaiter(plotlyOutput("stats_time_plot", height = "400px"))
                ),
                column(6, 
                       h4("Regional Breakdown", style="font-weight: bold; margin-top: 20px;"),
-                      plotlyOutput("stats_geo_plot", height = "400px")
+                      withWaiter(plotlyOutput("stats_geo_plot", height = "400px"))
                )
              ),
              
@@ -221,7 +228,7 @@ ui <- navbarPage(
                           )
                         ),
                         h3(textOutput("ent_plot_title")),
-                        plotlyOutput("ent_plot", height = "450px") 
+                        withWaiter(plotlyOutput("ent_plot", height = "450px")) 
                       )
              ),
              
@@ -242,7 +249,7 @@ ui <- navbarPage(
                           )
                         ),
                         h3(textOutput("lol_plot_title")),
-                        plotlyOutput("lol_plot", height = "550px") 
+                        withWaiter(plotlyOutput("lol_plot", height = "550px")) 
                       )
              ),
              
@@ -259,7 +266,7 @@ ui <- navbarPage(
                         fluidRow(
                           column(12,
                                  h3(textOutput("heat_plot_title")),
-                                 uiOutput("msa_dynamic_container") 
+                                 withWaiter(uiOutput("msa_dynamic_container")) 
                           )
                         )
                       )
@@ -304,9 +311,10 @@ ui <- navbarPage(
              ),
              mainPanel(
                uiOutput("sp_position_details"),
-               plotlyOutput("sp_aa_plot", height = "500px"),
+               withWaiter(plotlyOutput("sp_aa_plot", height = "500px")),
                DTOutput("sp_aa_table")
              )
+
            )
   ),
   

@@ -151,6 +151,7 @@ server <- function(input, output, session) {
                                "<br>Sequences: ", Count))) +
       geom_col(color = "white", size = 0.2) + 
       scale_fill_manual(values = c("H1N1" = "#3498db", "H3N2" = "#e74c3c")) +
+      scale_y_continuous(labels = scales::comma) +
       theme_minimal(base_size = 14) +
       labs(x = "Year", y = "Sequence Count", fill = "Subtype") +
       theme(
@@ -159,6 +160,7 @@ server <- function(input, output, session) {
         legend.position = "bottom"
       )    
     ggplotly(p, tooltip = "text") %>% 
+      layout(yaxis = list(tickformat = ",")) %>%
       config(displayModeBar = FALSE)
   })
 
@@ -170,6 +172,7 @@ server <- function(input, output, session) {
       ggplot(aes(x = region_ord, y = Count, fill = region, group = region, 
                  text = paste0("Region: ", region, "<br>Count: ", Count))) +
       geom_col() +
+      scale_y_continuous(labels = scales::comma) +
       scale_fill_viridis_d(option = "mako") +
       theme_minimal(base_size = 14) +
       labs(x = "Region", y = "Count") +
@@ -180,7 +183,7 @@ server <- function(input, output, session) {
       )
 
     ggplotly(p, tooltip = "text") %>% 
-      layout(showlegend = FALSE) %>% 
+      layout(showlegend = FALSE, yaxis = list(tickformat = ",")) %>% 
       config(displayModeBar = FALSE)
   })
 
@@ -1070,6 +1073,9 @@ server <- function(input, output, session) {
       seqlogo = !isTRUE(input$show_mut_only), 
       colorscheme = if(input$variation_type == "AA") "clustal" else "nucleotide",
       alignmentHeight = inner_align_height
-    )
-  })
-}
+      )
+      })
+
+      # --- HIDE LOADING CURTAIN WHEN READY ---
+      waiter_hide()
+      }
