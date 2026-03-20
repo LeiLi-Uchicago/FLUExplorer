@@ -114,7 +114,7 @@ ui <- navbarPage(
   
   footer = tags$footer(
     style = "text-align: center; padding: 15px; background-color: #f8f9fa; border-top: 1px solid #e7e7e7; color: #6c757d; margin-top: 30px; width: 100%;",
-    HTML(paste0("&copy; ", format(Sys.Date(), "%Y"), " FLU Amino Acid Divergence Explorer. All rights reserved."))
+    HTML(paste0("&copy; ", format(Sys.Date(), "%Y"), "Center for Applied Bioinformatics | St. Jude Research. All rights reserved."))
   ),
   
   # ---------------------------------------------------------
