@@ -16,8 +16,9 @@ ui <- navbarPage(
     use_waiter(), 
     waiter_show_on_load(
       html = tagList(
-        spin_fading_circles(), 
-        h3("Influenza Divergence Explorer is Loading...", style = "color: white; margin-top: 20px;")
+        spin_pulsar(), 
+        h3("Influenza Divergence Explorer", style = "color: white; font-weight: bold; margin-top: 20px;"),
+        h4("Processing genomic data and building visualizations...", style = "color: #bdc3c7;")
       ),
       color = "#2c3e50"
     ),
@@ -193,15 +194,22 @@ ui <- navbarPage(
              
              fluidRow(
                column(12, hr()),
-               column(4, selectInput("clade_plot_x", "Primary Category (X-axis):", 
-                                     choices = c("HA-Clade" = "clade", "NA-Clade" = "G_clade", "Year" = "Year", "Region" = "region", "Country" = "country"),
-                                     selected = "Year")),
-               column(4, selectInput("clade_plot_fill", "Sub-Category (Color):", 
-                                     choices = c("HA-Clade" = "clade", "NA-Clade" = "G_clade", "Year" = "Year", "Region" = "region", "Country" = "country"),
+               column(6, selectInput("clade_plot_subtype", "Filter Subtype:", 
+                                     choices = metadata_groups, 
+                                     selected = metadata_groups[1])),
+               column(6, selectInput("clade_plot_fill", "Sub-Category (Color):", 
+                                     choices = c("HA-Clade" = "clade", 
+                                                 "HA-Subclade" = "HA_subclade",
+                                                 "HA-Proposed Subclade" = "HA_proposedSubclade",
+                                                 "HA-Short Clade" = "HA_short_clade",
+                                                 "HA-Legacy Clade" = "HA_legacy_clade",
+                                                 "NA-Clade" = "G_clade", 
+                                                 "Region" = "region", 
+                                                 "Country" = "country"),
                                      selected = "clade")),
-               column(12, 
-                      h4("Custom Dataset Breakdown", style="font-weight: bold; margin-top: 10px;"),
-                      plotlyOutput("stats_clade_plot", height = "500px")
+               column(12,
+                      h4("Custom Dataset Breakdown by Year", style="font-weight: bold; margin-top: 10px;"),
+                      withWaiter(plotlyOutput("stats_clade_plot", height = "500px"))
                )
              )
            )
@@ -280,7 +288,7 @@ ui <- navbarPage(
            sidebarLayout(
              sidebarPanel(
                h5("Setting", style="font-weight: bold; color: #2980b9;"),
-               selectInput("sp_group_by", "Group by:", choices = c("Clade", "Year", "Year-Month" = "Year_Month")),
+               selectInput("sp_group_by", "Group by:", choices = c("Year", "Year-Month" = "Year_Month", "HA_Clade"), selected = "Year"),
                checkboxInput("sp_hide_empty_years", "Hide years without records (when Group by Year)", value = TRUE), #
                checkboxInput("sp_show_counts", "Show raw counts instead of percentage", value = FALSE),
                hr(),

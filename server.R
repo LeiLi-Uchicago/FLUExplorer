@@ -13,11 +13,47 @@ server <- function(input, output, session) {
   current_usage_by_year_month <- reactive({
     if(input$variation_type == "AA") aa_usage_by_year_month else nt_usage_by_year_month
   })
+  current_usage_by_group <- reactive({
+    if(input$variation_type == "AA") aa_usage_by_group else nt_usage_by_group
+  })
   current_colors <- reactive({
     if(input$variation_type == "AA") aa_colors else nt_colors
   })
   variant_label <- reactive({
     if(input$variation_type == "AA") "AA" else "NT"
+  })
+  
+  # --- HELPER: Update Grouping Choices based on Loaded Data ---
+  observe({
+    # Get all available group names from the loaded lists
+    available_groups <- names(current_usage_by_group())
+    if (length(available_groups) == 0) return()
+    
+    # Create a mapping for display names
+    # Key = Internal Key (Year), Value = Display Label (Year)
+    group_map <- setNames(available_groups, available_groups)
+    
+    # Custom labels for better readability
+    if ("Year_Month" %in% names(group_map)) names(group_map)[group_map == "Year_Month"] <- "Year-Month"
+    # Convert underscores to spaces and capitalize for others (e.g., HA_clade -> HA Clade)
+    other_indices <- which(!(group_map %in% c("Year", "Year_Month")))
+    for (i in other_indices) {
+      names(group_map)[i] <- gsub("_", " ", group_map[i])
+    }
+    
+    # Desired priority order: 1. Year, 2. Year_Month, then others
+    priority_keys <- intersect(c("Year", "Year_Month"), available_groups)
+    other_keys <- sort(setdiff(available_groups, priority_keys))
+    
+    final_ordered_keys <- c(priority_keys, other_keys)
+    
+    # Create the named list for choices: list("Display" = "internal_key")
+    final_choices <- setNames(final_ordered_keys, names(group_map)[match(final_ordered_keys, group_map)])
+    
+    # Determine selection: keep current if still valid, else default to Year
+    current_sel <- if (input$sp_group_by %in% available_groups) input$sp_group_by else "Year"
+    
+    updateSelectInput(session, "sp_group_by", choices = final_choices, selected = current_sel)
   })
   
   # --- HELPER: Update Gene Dropdowns based on Subtype ---
@@ -134,11 +170,17 @@ server <- function(input, output, session) {
 
   stats_metadata_filtered <- reactive({
     req(input$stats_year_range)
-    major_continents <- c("Africa", "Asia", "Europe", "North America", "South America", "Oceania")
-    # PERFORMANCE: use pre-aggregated summary instead of full metadata_global
-    metadata_summary_stats %>%
-      filter(Year >= input$stats_year_range[1], Year <= input$stats_year_range[2]) %>%
-      filter(region %in% major_continents)
+    
+    withProgress(message = "Filtering Global Metadata...", value = 0.5, {
+      major_continents <- c("Africa", "Asia", "Europe", "North America", "South America", "Oceania")
+      # PERFORMANCE: use pre-aggregated summary instead of full metadata_global
+      res <- metadata_summary_stats %>%
+        filter(Year >= input$stats_year_range[1], Year <= input$stats_year_range[2]) %>%
+        filter(region %in% major_continents)
+      
+      setProgress(1)
+      return(res)
+    })
   })
 
   output$stats_time_plot <- renderPlotly({
@@ -188,27 +230,31 @@ server <- function(input, output, session) {
   })
 
   output$stats_clade_plot <- renderPlotly({
-    req(input$clade_plot_x, input$clade_plot_fill)
+    req(input$clade_plot_fill, input$clade_plot_subtype)
 
-    summary_df <- stats_metadata_filtered() %>%
-      group_by(!!sym(input$clade_plot_x), !!sym(input$clade_plot_fill)) %>%
+    plot_df <- stats_metadata_filtered()
+    # No longer check for "All" because it's removed from UI
+    plot_df <- plot_df %>% filter(Group == input$clade_plot_subtype)
+
+    summary_df <- plot_df %>%
+      group_by(Year, fill_val = !!sym(input$clade_plot_fill)) %>%
       summarise(Count = sum(n), .groups = "drop")
     
     validate(need(nrow(summary_df) > 0, "No data available for the current filters."))
     
-    fill_items <- unique(summary_df[[input$clade_plot_fill]])
+    fill_items <- unique(summary_df$fill_val)
     n_colors <- length(fill_items)
     
-    p <- ggplot(summary_df, aes(x = !!sym(input$clade_plot_x), 
+    p <- ggplot(summary_df, aes(x = Year, 
                                 y = Count, 
-                                fill = !!sym(input$clade_plot_fill),
-                                group = !!sym(input$clade_plot_fill), # FIX: Added group
-                                text = paste0(input$clade_plot_x, ": ", !!sym(input$clade_plot_x),
-                                              "<br>", input$clade_plot_fill, ": ", !!sym(input$clade_plot_fill),
+                                fill = fill_val,
+                                group = fill_val,
+                                text = paste0("Year: ", Year,
+                                              "<br>", input$clade_plot_fill, ": ", fill_val,
                                               "<br>Count: ", Count))) +
-      geom_col(color = "white", size = 0.2) + # FIX: Changed linewidth to size
-      { if(input$clade_plot_fill %in% c("clade")) scale_fill_manual(values = clade_colors_vec) 
-        else if(input$clade_plot_fill %in% c("G_clade")) scale_fill_manual(values = g_clade_colors_vec)
+      geom_col(color = "white", size = 0.2) + 
+      { if(input$clade_plot_fill %in% c("clade", "G_clade", "HA_subclade", "HA_proposedSubclade", "HA_short_clade", "HA_legacy_clade")) 
+          scale_fill_manual(values = master_clade_colors) 
         else scale_fill_manual(values = grDevices::rainbow(n_colors)) } +
       theme_minimal(base_size = 14) +
       theme(
@@ -217,9 +263,11 @@ server <- function(input, output, session) {
         legend.position = "right",
         panel.grid.major.x = element_blank()
       ) +
-      labs(x = input$clade_plot_x, y = "Sequence Count", fill = input$clade_plot_fill)
+      labs(x = "Year", y = "Sequence Count", fill = "")
     
-    ggplotly(p, tooltip = "text") %>% config(displayModeBar = FALSE)
+    ggplotly(p, tooltip = "text") %>% 
+      layout(legend = list(title = list(text = ""))) %>%
+      config(displayModeBar = FALSE)
   })
   
   # ==========================================
@@ -231,11 +279,11 @@ server <- function(input, output, session) {
     idx <- as.numeric(input$sp_quick_visit)
     row_data <- important_pos_df[idx, ]
     
-    freezeReactiveValue(input, "sp_subtype")
+    freezeReactiveValue(input, "global_subtype")
     freezeReactiveValue(input, "sp_gene")
     freezeReactiveValue(input, "sp_position")
     
-    updateSelectInput(session, "sp_subtype", selected = as.character(row_data$Subtype))
+    updateSelectInput(session, "global_subtype", selected = as.character(row_data$Subtype))
     updateSelectInput(session, "sp_gene", selected = as.character(row_data$Gene))
     updateNumericInput(session, "sp_position", value = as.numeric(row_data$Position))
   })
@@ -251,10 +299,10 @@ server <- function(input, output, session) {
     pos       <- as.numeric(vals[[3]])
     group_col <- as.character(vals[[4]]) 
     
-    data <- switch(group_col,
-                   "Clade" = current_usage_by_clade(),
-                   "Year" = current_usage_by_year(),
-                   "Year_Month" = current_usage_by_year_month())
+    # 0. Find the appropriate table for the selected group
+    data <- current_usage_by_group()[[group_col]]
+    
+    validate(need(!is.null(data), paste("Table not found for group:", group_col)))
     
     # 1. Basic filtering by gene, position, subtype
     filtered <- data %>% 
@@ -275,12 +323,12 @@ server <- function(input, output, session) {
     # 4. Apply minimum sequences filter based on Valid_Total
     filtered <- filtered %>% filter(Valid_Total >= input$sp_min_seqs)
     
-    # 5. Clean up temporal metadata if necessary
-    if (group_col == "Year_Month") {
-      filtered <- filtered %>% filter(Year_Month != "Unknown")
-    } else if (group_col == "Year") {
-      filtered <- filtered %>% filter(Year != "Unknown")
-    }
+    # 5. Clean up temporal metadata if necessary (KEEP 'Unknown' if requested)
+    # if (group_col == "Year_Month") {
+    #   filtered <- filtered %>% filter(Year_Month != "Unknown")
+    # } else if (group_col == "Year") {
+    #   filtered <- filtered %>% filter(Year != "Unknown")
+    # }
     
     # 6. Optionally hide years without records (Valid_Total > 0)
     if (group_col == "Year" && input$sp_hide_empty_years) {
@@ -311,10 +359,20 @@ server <- function(input, output, session) {
     }
     
     # Enforce correct data type for X-axis to properly show or hide gaps
+    # Define "null-ish" values to move to the front
+    special_values <- c("Unknown", "unassigned", "Unassigned")
+
     if (group_col == "Year") {
-      if (input$sp_hide_empty_years) {
-        # Treat as categorical to hide gaps
-        data[[group_col]] <- as.character(data[[group_col]])
+      present_specials <- intersect(special_values, as.character(data[[group_col]]))
+      has_specials <- length(present_specials) > 0
+      
+      if (input$sp_hide_empty_years || has_specials) {
+        # Treat as categorical to hide gaps or handle Unknown/unassigned
+        all_years <- sort(unique(as.character(data[[group_col]])))
+        if (has_specials) {
+          all_years <- c(present_specials, setdiff(all_years, present_specials))
+        }
+        data[[group_col]] <- factor(data[[group_col]], levels = all_years)
         x_scale <- scale_x_discrete()
       } else {
         # Treat as continuous to show gaps naturally
@@ -322,10 +380,32 @@ server <- function(input, output, session) {
         x_scale <- scale_x_continuous(breaks = function(x) unique(floor(pretty(seq(min(x, na.rm=TRUE), max(x, na.rm=TRUE))))))
       }
     } else if (group_col == "Year_Month") {
-      all_yms <- sort(unique(data[[group_col]]))
-      # Select every 6th label to avoid overlapping on the x-axis
-      x_scale <- scale_x_discrete(breaks = all_yms[seq(1, length(all_yms), by = 6)])
+      all_yms <- sort(unique(as.character(data[[group_col]])))
+      present_specials <- intersect(special_values, all_yms)
+      has_specials <- length(present_specials) > 0
+      
+      if (has_specials) {
+        all_yms <- c(present_specials, setdiff(all_yms, present_specials))
+      }
+      data[[group_col]] <- factor(data[[group_col]], levels = all_yms)
+      
+      # Select breaks (every 6th to avoid overlap), ensuring specials are shown if present
+      if (has_specials) {
+        # Always include specials, then sample every 6th from the chronological months
+        chronological_yms <- setdiff(all_yms, special_values)
+        sampled_yms <- chronological_yms[seq(1, length(chronological_yms), by = 6)]
+        x_scale <- scale_x_discrete(breaks = c(present_specials, sampled_yms))
+      } else {
+        x_scale <- scale_x_discrete(breaks = all_yms[seq(1, length(all_yms), by = 6)])
+      }
     } else {
+      # Generic handling for other groups (Clades, etc.): Ensure Unknown/unassigned are first
+      all_vals <- sort(unique(as.character(data[[group_col]])))
+      present_specials <- intersect(special_values, all_vals)
+      if (length(present_specials) > 0) {
+        all_vals <- c(present_specials, setdiff(all_vals, present_specials))
+      }
+      data[[group_col]] <- factor(data[[group_col]], levels = all_vals)
       x_scale <- scale_x_discrete()
     }
     
@@ -1077,5 +1157,7 @@ server <- function(input, output, session) {
       })
 
       # --- HIDE LOADING CURTAIN WHEN READY ---
-      waiter_hide()
+      session$onFlushed(function() {
+        waiter_hide()
+      }, once = TRUE)
       }

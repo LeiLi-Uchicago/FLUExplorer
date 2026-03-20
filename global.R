@@ -23,7 +23,7 @@ options(scipen = 999)
 # ==========================================
 # 1. GLOBAL DATA LOADING & SETUP
 # ==========================================
-# Version 2: Fixed Neuraminidase (NA) protein loading
+# Version 5: More clade columns in summary
 RDS_CACHE <- "data/app_cache_flu.rds"
 
 # Subtypes to load
@@ -35,7 +35,7 @@ if (file.exists(RDS_CACHE)) {
   cache <- readRDS(RDS_CACHE)
   
   # Check if all required objects are present
-  required_objects <- c("metadata_global", "aa_usage_by_clade", "nt_usage_by_clade")
+  required_objects <- c("metadata_global", "aa_usage_by_clade", "nt_usage_by_clade", "metadata_summary_stats", "aa_usage_by_group")
   if (all(required_objects %in% names(cache))) {
     metadata_global    <- cache$metadata_global
     total_raw          <- cache$total_raw
@@ -46,7 +46,19 @@ if (file.exists(RDS_CACHE)) {
     nt_usage_by_clade  <- cache$nt_usage_by_clade
     nt_usage_by_year   <- cache$nt_usage_by_year
     nt_usage_by_year_month <- cache$nt_usage_by_year_month
-    important_pos_df   <- cache$important_pos_df
+    important_pos_df       = cache$important_pos_df
+
+    # Pre-calculated groups
+    aa_usage_by_group      <- cache$aa_usage_by_group
+    nt_usage_by_group      <- cache$nt_usage_by_group
+
+    # Pre-calculated stats
+
+    metadata_summary_stats <- cache$metadata_summary_stats
+    total_countries_val    <- cache$total_countries_val
+    time_range_val         <- cache$time_range_val
+    metadata_groups        <- cache$metadata_groups
+    metadata_years         <- cache$metadata_years
     
     rm(cache)   # free the wrapper list from memory
     message("RDS cache loaded successfully.")
@@ -72,7 +84,8 @@ if (!cache_loaded) {
       # CRITICAL: na = character() ensures 'NA' (Neuraminidase) is NOT treated as a missing value
       meta <- read_csv(meta_path, show_col_types = FALSE, na = character(),
                        col_select = c("Isolate_Id", "Subtype", "Collection_Date", "Location", 
-                                      "HA_clade", "NA_clade", "HA_subclade"))
+                                      "HA_clade", "NA_clade", "HA_subclade", 
+                                      "HA_proposedSubclade", "HA_short_clade", "HA_legacy_clade"))
       
       # Rename columns to match app expectations
       # Group = Subtype (A / H1N1)
@@ -95,6 +108,14 @@ if (!cache_loaded) {
   }
   metadata_global <- bind_rows(all_metadata)
   
+  # Clean up empty clade names
+  clade_cols_to_clean <- c("clade", "G_clade", "HA_subclade", "HA_proposedSubclade", "HA_short_clade", "HA_legacy_clade")
+  for(col in clade_cols_to_clean) {
+    if(col %in% colnames(metadata_global)) {
+      metadata_global[[col]] <- ifelse(is.na(metadata_global[[col]]) | metadata_global[[col]] == "" | metadata_global[[col]] == "trace 0", "Unknown", metadata_global[[col]])
+    }
+  }
+
   # Robust Date Handling
   metadata_global$Year <- stringr::str_extract(metadata_global$date, "^\\d{4}")
   metadata_global$YM <- stringr::str_extract(metadata_global$date, "^\\d{4}-\\d{2}")
@@ -104,64 +125,65 @@ if (!cache_loaded) {
   total_parsed <- scales::comma(nrow(metadata_global))
   
   # --- Usage tables ---
-  aa_clade_list <- list()
-  aa_year_list  <- list()
-  aa_ym_list    <- list()
-  nt_clade_list <- list()
-  nt_year_list  <- list()
-  nt_ym_list    <- list()
+  aa_temp <- list()
+  nt_temp <- list()
   
   for (subtype in SUBTYPES) {
     message("Loading usage tables for ", subtype)
     
     # AA tables
-    # CRITICAL: na = character() ensures 'NA' protein is not interpreted as missing
-    aa_clade <- read_csv(paste0("data/", subtype, "/AA/aa_usage_by_HA_clade.csv"), show_col_types = FALSE, na = character()) %>%
-      dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
-      dplyr::rename_with(~ gsub("^HA_clade$", "Clade", .x), any_of("HA_clade")) %>%
-      mutate(Group = subtype)
-    
-    aa_year <- read_csv(paste0("data/", subtype, "/AA/aa_usage_by_Year.csv"), show_col_types = FALSE, na = character()) %>%
-      dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
-      mutate(Group = subtype)
-      
-    aa_ym <- read_csv(paste0("data/", subtype, "/AA/aa_usage_by_Year_Month.csv"), show_col_types = FALSE, na = character()) %>%
-      dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
-      mutate(Group = subtype)
-    
-    aa_clade_list[[subtype]] <- aa_clade
-    aa_year_list[[subtype]]  <- aa_year
-    aa_ym_list[[subtype]]    <- aa_ym
+    aa_dir <- paste0("data/", subtype, "/AA/")
+    if (dir.exists(aa_dir)) {
+      aa_files <- list.files(aa_dir, pattern = "aa_usage_by_.*\\.csv", full.names = TRUE)
+      for (f in aa_files) {
+        # Extract group name: aa_usage_by_XYZ.csv -> XYZ
+        group_name <- sub(".*_by_(.*)\\.csv$", "\\1", basename(f))
+        
+        df <- read_csv(f, show_col_types = FALSE, na = character()) %>%
+          dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
+          mutate(Group = subtype)
+          
+        aa_temp[[group_name]][[subtype]] <- df
+      }
+    }
     
     # NT tables
-    nt_clade <- read_csv(paste0("data/", subtype, "/NT/nt_usage_by_HA_clade.csv"), show_col_types = FALSE, na = character()) %>%
-      dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
-      dplyr::rename_with(~ gsub("^HA_clade$", "Clade", .x), any_of("HA_clade")) %>%
-      dplyr::rename_with(~ gsub("^Nucleotide$", "AminoAcid", .x), any_of("Nucleotide")) %>%
-      mutate(Group = subtype)
-    
-    nt_year <- read_csv(paste0("data/", subtype, "/NT/nt_usage_by_Year.csv"), show_col_types = FALSE, na = character()) %>%
-      dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
-      dplyr::rename_with(~ gsub("^Nucleotide$", "AminoAcid", .x), any_of("Nucleotide")) %>%
-      mutate(Group = subtype)
-      
-    nt_ym <- read_csv(paste0("data/", subtype, "/NT/nt_usage_by_Year_Month.csv"), show_col_types = FALSE, na = character()) %>%
-      dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
-      dplyr::rename_with(~ gsub("^Nucleotide$", "AminoAcid", .x), any_of("Nucleotide")) %>%
-      mutate(Group = subtype)
-      
-    nt_clade_list[[subtype]] <- nt_clade
-    nt_year_list[[subtype]]  <- nt_year
-    nt_ym_list[[subtype]]    <- nt_ym
+    nt_dir <- paste0("data/", subtype, "/NT/")
+    if (dir.exists(nt_dir)) {
+      nt_files <- list.files(nt_dir, pattern = "nt_usage_by_.*\\.csv", full.names = TRUE)
+      for (f in nt_files) {
+        group_name <- sub(".*_by_(.*)\\.csv$", "\\1", basename(f))
+        
+        df <- read_csv(f, show_col_types = FALSE, na = character()) %>%
+          dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
+          dplyr::rename_with(~ gsub("^Nucleotide$", "AminoAcid", .x), any_of("Nucleotide")) %>%
+          mutate(Group = subtype)
+          
+        nt_temp[[group_name]][[subtype]] <- df
+      }
+    }
   }
   
-  aa_usage_by_clade      <- bind_rows(aa_clade_list)
-  aa_usage_by_year       <- bind_rows(aa_year_list)
-  aa_usage_by_year_month <- bind_rows(aa_ym_list)
+  # Bind rows for each group
+  aa_usage_by_group <- list()
+  for (gn in names(aa_temp)) {
+    aa_usage_by_group[[gn]] <- bind_rows(aa_temp[[gn]])
+  }
   
-  nt_usage_by_clade      <- bind_rows(nt_clade_list)
-  nt_usage_by_year       <- bind_rows(nt_year_list)
-  nt_usage_by_year_month <- bind_rows(nt_ym_list)
+  nt_usage_by_group <- list()
+  for (gn in names(nt_temp)) {
+    nt_usage_by_group[[gn]] <- bind_rows(nt_temp[[gn]])
+  }
+  
+  # Map to existing top-level variables for backward compatibility with server.R
+  # Note: We rename HA_clade to Clade ONLY for these convenience variables
+  aa_usage_by_clade      <- aa_usage_by_group[["HA_clade"]] %>% dplyr::rename_with(~ gsub("^HA_clade$", "Clade", .x), any_of("HA_clade"))
+  aa_usage_by_year       <- aa_usage_by_group[["Year"]]
+  aa_usage_by_year_month <- aa_usage_by_group[["Year_Month"]]
+  
+  nt_usage_by_clade      <- nt_usage_by_group[["HA_clade"]] %>% dplyr::rename_with(~ gsub("^HA_clade$", "Clade", .x), any_of("HA_clade"))
+  nt_usage_by_year       <- nt_usage_by_group[["Year"]]
+  nt_usage_by_year_month <- nt_usage_by_group[["Year_Month"]]
 
   # --- Important positions (Placeholder for Flu) ---
   important_pos_df <- data.frame(
@@ -178,6 +200,19 @@ if (!cache_loaded) {
   
   # --- Save RDS cache ---
   message("Writing RDS cache to: ", RDS_CACHE)
+  
+  # Pre-calculate these before saving if they weren't loaded from cache
+  message("Pre-aggregating metadata statistics...")
+  metadata_summary_stats <- metadata_global %>%
+    group_by(Year, Group, region, country, clade, G_clade, 
+             HA_subclade, HA_proposedSubclade, HA_short_clade, HA_legacy_clade) %>%
+    summarise(n = n(), .groups = "drop")
+  
+  total_countries_val <- length(unique(metadata_global$country))
+  time_range_val <- paste(min(metadata_global$Year, na.rm=T), "-", max(metadata_global$Year, na.rm=T))
+  metadata_groups <- sort(na.omit(unique(metadata_global$Group)))
+  metadata_years <- sort(na.omit(unique(metadata_global$Year)), decreasing = TRUE)
+
   saveRDS(
     list(
       metadata_global        = metadata_global,
@@ -189,7 +224,14 @@ if (!cache_loaded) {
       nt_usage_by_clade      = nt_usage_by_clade,
       nt_usage_by_year       = nt_usage_by_year,
       nt_usage_by_year_month = nt_usage_by_year_month,
-      important_pos_df       = important_pos_df
+      important_pos_df       = important_pos_df,
+      aa_usage_by_group      = aa_usage_by_group,
+      nt_usage_by_group      = nt_usage_by_group,
+      metadata_summary_stats = metadata_summary_stats,
+      total_countries_val    = total_countries_val,
+      time_range_val         = time_range_val,
+      metadata_groups        = metadata_groups,
+      metadata_years         = metadata_years
     ),
     file = RDS_CACHE
   )
@@ -212,24 +254,6 @@ if (!cache_loaded) {
 #   dplyr::group_by(region) %>%
 #   dplyr::summarise(lat = mean(lat), lng = mean(long), .groups = "drop") %>%
 #   dplyr::rename(country = region)
-
-# ==========================================
-# 3. PRE-AGGREGATED DATA FOR FAST PLOTTING
-# ==========================================
-# This avoids processing the full metadata_global (hundreds of thousands of rows) 
-# inside reactive contexts which causes UI lag.
-message("Pre-aggregating metadata statistics...")
-metadata_summary_stats <- metadata_global %>%
-  group_by(Year, Group, region, country, clade, G_clade) %>%
-  summarise(n = n(), .groups = "drop")
-
-# Pre-calculate summary box values
-total_countries_val <- length(unique(metadata_global$country))
-time_range_val <- paste(min(metadata_global$Year, na.rm=T), "-", max(metadata_global$Year, na.rm=T))
-
-# Pre-calculate choices for dropdowns to speed up UI generation
-metadata_groups <- sort(na.omit(unique(metadata_global$Group)))
-metadata_years <- sort(na.omit(unique(metadata_global$Year)), decreasing = TRUE)
 
 # ---- Post-load steps ----
 ALL_AAS <- c("A","C","D","E","F","G","H","I","K","L","M","N","P","Q","R","S","T","V","W","Y","*","X", "-")
@@ -255,11 +279,24 @@ ggmsa_custom_colors <- data.frame(
   stringsAsFactors = FALSE
 )
 
-# Generate rainbow palettes for clades
-all_clades <- sort(unique(metadata_global$clade))
-clade_colors_vec <- grDevices::rainbow(length(all_clades))
-names(clade_colors_vec) <- all_clades
+# Generate rainbow palettes for all possible clades found in any clade column
+all_possible_clades <- sort(unique(c(
+  metadata_global$clade, 
+  metadata_global$G_clade, 
+  metadata_global$HA_subclade, 
+  metadata_global$HA_proposedSubclade, 
+  metadata_global$HA_short_clade, 
+  metadata_global$HA_legacy_clade
+)))
 
-all_g_clades <- sort(unique(metadata_global$G_clade))
-g_clade_colors_vec <- grDevices::rainbow(length(all_g_clades))
-names(g_clade_colors_vec) <- all_g_clades
+# Exclude 'Unknown' from the main rainbow generation to give it a neutral color
+actual_clades <- setdiff(all_possible_clades, "Unknown")
+master_clade_colors <- grDevices::rainbow(length(actual_clades))
+names(master_clade_colors) <- actual_clades
+
+# Add neutral color for Unknown
+master_clade_colors["Unknown"] <- "#d3d3d3"
+
+# For backward compatibility with server logic that expects specific names
+clade_colors_vec   <- master_clade_colors
+g_clade_colors_vec <- master_clade_colors
