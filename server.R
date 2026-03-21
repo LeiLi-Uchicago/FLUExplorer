@@ -4,18 +4,7 @@
 server <- function(input, output, session) {
   
   # --- REACTIVE DATA SWITCH ---
-  current_usage_by_clade <- reactive({
-    if(input$variation_type == "AA") aa_usage_by_clade else nt_usage_by_clade
-  })
-  current_usage_by_year <- reactive({
-    if(input$variation_type == "AA") aa_usage_by_year else nt_usage_by_year
-  })
-  current_usage_by_year_month <- reactive({
-    if(input$variation_type == "AA") aa_usage_by_year_month else nt_usage_by_year_month
-  })
-  current_usage_by_group <- reactive({
-    if(input$variation_type == "AA") aa_usage_by_group else nt_usage_by_group
-  })
+  
   current_colors <- reactive({
     if(input$variation_type == "AA") aa_colors else nt_colors
   })
@@ -23,21 +12,44 @@ server <- function(input, output, session) {
     if(input$variation_type == "AA") "AA" else "NT"
   })
   
-  # --- HELPER: Update Grouping Choices based on Loaded Data ---
-  observe({
-    req(input$global_subtype)
-    # Get all available group names from the loaded lists
-    all_groups <- names(current_usage_by_group())
-    if (length(all_groups) == 0) return()
+  current_usage_by_clade <- reactive({
+    req(input$global_subtype, input$variation_type)
+    var_lower <- tolower(input$variation_type)
     
-    # Filter to only groups that have data for the currently selected subtype
-    available_groups <- c()
-    for (g in all_groups) {
-      df <- current_usage_by_group()[[g]]
-      if (!is.null(df) && any(df$Group == input$global_subtype)) {
-        available_groups <- c(available_groups, g)
+    dir_path <- paste0("data/", input$global_subtype, "/", input$variation_type, "/")
+    rds_file <- paste0(dir_path, var_lower, "_usage_by_HA_clade.rds")
+    
+    # Fallback to the first available group file if HA_clade is not available for this subtype
+    if (!file.exists(rds_file)) {
+      files <- list.files(dir_path, pattern = paste0("^", var_lower, "_usage_by_.*\\.rds$"))
+      files <- setdiff(files, c(paste0(var_lower, "_usage_by_Year.rds"), paste0(var_lower, "_usage_by_Year_Month.rds")))
+      if (length(files) > 0) {
+        rds_file <- paste0(dir_path, files[1])
       }
     }
+    
+    if (file.exists(rds_file)) {
+      df <- readRDS(rds_file)
+      if ("HA_clade" %in% colnames(df)) {
+        df <- df %>% dplyr::rename(Clade = HA_clade)
+      } else {
+        group_col <- sub(paste0("^", var_lower, "_usage_by_(.*)\\.rds$"), "\\1", basename(rds_file))
+        if (group_col %in% colnames(df)) {
+          df <- df %>% dplyr::rename(Clade = !!sym(group_col))
+        }
+      }
+      return(df)
+    }
+    return(data.frame(Group=character(), Gene=character(), Clade=character(), Position=numeric(), AminoAcid=character(), Count=numeric()))
+  })
+
+  # --- HELPER: Update Grouping Choices based on Loaded Data ---
+  observe({
+    req(input$global_subtype, input$variation_type)
+    dir_path <- paste0("data/", input$global_subtype, "/", input$variation_type, "/")
+    files <- list.files(dir_path, pattern = paste0("^", tolower(input$variation_type), "_usage_by_.*\\.rds$"))
+    available_groups <- sub(paste0("^", tolower(input$variation_type), "_usage_by_(.*)\\.rds$"), "\\1", files)
+    
     if (length(available_groups) == 0) return()
 
     # Create a mapping for display names
@@ -122,17 +134,12 @@ server <- function(input, output, session) {
   observeEvent(input$clade_plot_subtype, {
     req(input$clade_plot_subtype)
     
-    # Find valid groups for this subtype directly from aa_usage files
-    all_usage_groups <- names(aa_usage_by_group)
-    valid_groups <- c()
+    # Find valid groups for this subtype by scanning the directory
+    dir_path <- paste0("data/", input$clade_plot_subtype, "/AA/")
+    files <- list.files(dir_path, pattern = "^aa_usage_by_.*\\.rds$")
+    all_usage_groups <- sub("^aa_usage_by_(.*)\\.rds$", "\\1", files)
     
-    for (g in all_usage_groups) {
-      if (g %in% c("Year", "Year_Month")) next
-      df <- aa_usage_by_group[[g]]
-      if (!is.null(df) && any(df$Group == input$clade_plot_subtype)) {
-        valid_groups <- c(valid_groups, g)
-      }
-    }
+    valid_groups <- setdiff(all_usage_groups, c("Year", "Year_Month"))
     
     # Map usage group names to their respective metadata columns
     meta_cols <- valid_groups
@@ -333,6 +340,16 @@ server <- function(input, output, session) {
     list(input$global_subtype, input$sp_gene, input$sp_position, input$sp_group_by)
   }) %>% debounce(100) 
   
+  current_sp_group_data <- reactive({
+    req(input$global_subtype, input$variation_type, input$sp_group_by)
+    var_lower <- tolower(input$variation_type)
+    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", var_lower, "_usage_by_", input$sp_group_by, ".rds")
+    if (file.exists(rds_file)) {
+      return(readRDS(rds_file))
+    }
+    return(NULL)
+  })
+
   sp_filtered_data <- reactive({
     vals <- trigger_data()
     subtype   <- as.character(vals[[1]])
@@ -340,8 +357,7 @@ server <- function(input, output, session) {
     pos       <- as.numeric(vals[[3]])
     group_col <- as.character(vals[[4]]) 
     
-    # 0. Find the appropriate table for the selected group
-    data <- current_usage_by_group()[[group_col]]
+    data <- current_sp_group_data()
     
     validate(need(!is.null(data), paste("Table not found for group:", group_col)))
     

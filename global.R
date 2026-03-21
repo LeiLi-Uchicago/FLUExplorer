@@ -23,8 +23,8 @@ options(scipen = 999)
 # ==========================================
 # 1. GLOBAL DATA LOADING & SETUP
 # ==========================================
-# Version 8: Custom subtype sorting
-RDS_CACHE <- "data/app_cache_flu_v7.rds"
+# Version 9: Lazy-Loading Architecture
+RDS_CACHE <- "data/app_cache_flu_v8.rds"
 
 # Subtypes to load: Dynamically detect valid subtype folders in data/
 possible_dirs <- list.dirs("data", full.names = FALSE, recursive = FALSE)
@@ -41,26 +41,12 @@ if (file.exists(RDS_CACHE)) {
   message("Loading data from RDS cache: ", RDS_CACHE)
   cache <- readRDS(RDS_CACHE)
   
-  # Check if all required objects are present
-  required_objects <- c("metadata_global", "aa_usage_by_clade", "nt_usage_by_clade", "metadata_summary_stats", "aa_usage_by_group", "metadata_grouping_cols")
+  # Check if the lightweight cache is present
+  required_objects <- c("metadata_summary_stats", "important_pos_df", "metadata_grouping_cols")
   if (all(required_objects %in% names(cache))) {
-    metadata_global    <- cache$metadata_global
     total_raw          <- cache$total_raw
     total_parsed       <- cache$total_parsed
-    aa_usage_by_clade  <- cache$aa_usage_by_clade
-    aa_usage_by_year   <- cache$aa_usage_by_year
-    aa_usage_by_year_month <- cache$aa_usage_by_year_month
-    nt_usage_by_clade  <- cache$nt_usage_by_clade
-    nt_usage_by_year   <- cache$nt_usage_by_year
-    nt_usage_by_year_month <- cache$nt_usage_by_year_month
-    important_pos_df       = cache$important_pos_df
-
-    # Pre-calculated groups
-    aa_usage_by_group      <- cache$aa_usage_by_group
-    nt_usage_by_group      <- cache$nt_usage_by_group
-
-    # Pre-calculated stats
-
+    important_pos_df       <- cache$important_pos_df
     metadata_summary_stats <- cache$metadata_summary_stats
     total_countries_val    <- cache$total_countries_val
     time_range_val         <- cache$time_range_val
@@ -80,8 +66,8 @@ if (file.exists(RDS_CACHE)) {
 }
 
 if (!cache_loaded) {
-  # ---- SLOW PATH: read from source files and build cache ----
-  message("RDS cache not found. Loading from source files and building cache...")
+  # ---- SLOW PATH: process raw CSVs into lazy-load RDS format and build cache ----
+  message("RDS cache not found. Processing raw CSV files into lazy-load RDS format...")
   
   # --- Metadata ---
   all_metadata <- list()
@@ -132,26 +118,21 @@ if (!cache_loaded) {
   metadata_global <- metadata_global %>% filter(!is.na(Year))
   total_parsed <- scales::comma(nrow(metadata_global))
   
-  # --- Usage tables ---
-  aa_temp <- list()
-  nt_temp <- list()
-  
+  # --- Process Usage Tables into individual RDS files ---
   for (subtype in SUBTYPES) {
-    message("Loading usage tables for ", subtype)
+    message("Processing usage tables into RDS for ", subtype)
     
     # AA tables
     aa_dir <- paste0("data/", subtype, "/AA/")
     if (dir.exists(aa_dir)) {
       aa_files <- list.files(aa_dir, pattern = "aa_usage_by_.*\\.csv", full.names = TRUE)
       for (f in aa_files) {
-        # Extract group name: aa_usage_by_XYZ.csv -> XYZ
-        group_name <- sub(".*_by_(.*)\\.csv$", "\\1", basename(f))
-        
         df <- read_csv(f, show_col_types = FALSE, na = character()) %>%
           dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
           mutate(Group = subtype)
           
-        aa_temp[[group_name]][[subtype]] <- df
+        rds_path <- sub("\\.csv$", ".rds", f)
+        saveRDS(df, rds_path)
       }
     }
     
@@ -160,38 +141,16 @@ if (!cache_loaded) {
     if (dir.exists(nt_dir)) {
       nt_files <- list.files(nt_dir, pattern = "nt_usage_by_.*\\.csv", full.names = TRUE)
       for (f in nt_files) {
-        group_name <- sub(".*_by_(.*)\\.csv$", "\\1", basename(f))
-        
         df <- read_csv(f, show_col_types = FALSE, na = character()) %>%
           dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
           dplyr::rename_with(~ gsub("^Nucleotide$", "AminoAcid", .x), any_of("Nucleotide")) %>%
           mutate(Group = subtype)
           
-        nt_temp[[group_name]][[subtype]] <- df
+        rds_path <- sub("\\.csv$", ".rds", f)
+        saveRDS(df, rds_path)
       }
     }
   }
-  
-  # Bind rows for each group
-  aa_usage_by_group <- list()
-  for (gn in names(aa_temp)) {
-    aa_usage_by_group[[gn]] <- bind_rows(aa_temp[[gn]])
-  }
-  
-  nt_usage_by_group <- list()
-  for (gn in names(nt_temp)) {
-    nt_usage_by_group[[gn]] <- bind_rows(nt_temp[[gn]])
-  }
-  
-  # Map to existing top-level variables for backward compatibility with server.R
-  # Note: We rename HA_clade to Clade ONLY for these convenience variables
-  aa_usage_by_clade      <- aa_usage_by_group[["HA_clade"]] %>% dplyr::rename_with(~ gsub("^HA_clade$", "Clade", .x), any_of("HA_clade"))
-  aa_usage_by_year       <- aa_usage_by_group[["Year"]]
-  aa_usage_by_year_month <- aa_usage_by_group[["Year_Month"]]
-  
-  nt_usage_by_clade      <- nt_usage_by_group[["HA_clade"]] %>% dplyr::rename_with(~ gsub("^HA_clade$", "Clade", .x), any_of("HA_clade"))
-  nt_usage_by_year       <- nt_usage_by_group[["Year"]]
-  nt_usage_by_year_month <- nt_usage_by_group[["Year_Month"]]
 
   # --- Important positions (Placeholder for Flu) ---
   important_pos_df <- data.frame(
@@ -225,18 +184,9 @@ if (!cache_loaded) {
 
   saveRDS(
     list(
-      metadata_global        = metadata_global,
       total_raw              = total_raw,
       total_parsed           = total_parsed,
-      aa_usage_by_clade      = aa_usage_by_clade,
-      aa_usage_by_year       = aa_usage_by_year,
-      aa_usage_by_year_month = aa_usage_by_year_month,
-      nt_usage_by_clade      = nt_usage_by_clade,
-      nt_usage_by_year       = nt_usage_by_year,
-      nt_usage_by_year_month = nt_usage_by_year_month,
       important_pos_df       = important_pos_df,
-      aa_usage_by_group      = aa_usage_by_group,
-      nt_usage_by_group      = nt_usage_by_group,
       metadata_summary_stats = metadata_summary_stats,
       total_countries_val    = total_countries_val,
       time_range_val         = time_range_val,
@@ -291,7 +241,11 @@ ggmsa_custom_colors <- data.frame(
 )
 
 # Generate rainbow palettes for all possible clades found in any clade column
-all_possible_clades <- unique(unlist(lapply(metadata_grouping_cols, function(col) metadata_global[[col]])))
+if (!exists("metadata_grouping_cols")) {
+  metadata_grouping_cols <- c("clade", "G_clade") # fallback
+}
+
+all_possible_clades <- unique(unlist(lapply(metadata_grouping_cols, function(col) metadata_summary_stats[[col]])))
 all_possible_clades <- sort(na.omit(all_possible_clades))
 
 # Exclude 'Unknown' from the main rainbow generation to give it a neutral color
