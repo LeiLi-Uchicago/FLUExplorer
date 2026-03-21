@@ -132,7 +132,7 @@ ui <- navbarPage(
            fluidPage(
              div(class = "jumbotron",
                  h1("Welcome to the FLU Amino Acid Divergence Explorer", style = "color: #2c3e50; font-weight: bold;"),
-                 p("A high-resolution visualization tool for analyzing Influenza Virus (H1N1 and H3N2) genetic diversity across lineages.", style = "font-size: 1.2em; color: #7f8c8d;"),
+                 p("A high-resolution visualization tool for analyzing Influenza Virus genetic diversity across multiple subtypes and lineages.", style = "font-size: 1.2em; color: #7f8c8d;"),
                  hr(),
                  div(style = "text-align: center; margin-top: 20px; margin-bottom: 30px;",
                      img(src = "welcome_banner.png", style = "max-width: 100%; height: auto; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);")
@@ -197,16 +197,7 @@ ui <- navbarPage(
                column(6, selectInput("clade_plot_subtype", "Filter Subtype:", 
                                      choices = metadata_groups, 
                                      selected = metadata_groups[1])),
-               column(6, selectInput("clade_plot_fill", "Sub-Category (Color):", 
-                                     choices = c("HA-Clade" = "clade", 
-                                                 "HA-Subclade" = "HA_subclade",
-                                                 "HA-Proposed Subclade" = "HA_proposedSubclade",
-                                                 "HA-Short Clade" = "HA_short_clade",
-                                                 "HA-Legacy Clade" = "HA_legacy_clade",
-                                                 "NA-Clade" = "G_clade", 
-                                                 "Region" = "region", 
-                                                 "Country" = "country"),
-                                     selected = "clade")),
+               column(6, selectInput("clade_plot_fill", "Sub-Category (Color):", choices = NULL)),
                column(12,
                       h4("Custom Dataset Breakdown by Year", style="font-weight: bold; margin-top: 10px;"),
                       withWaiter(plotlyOutput("stats_clade_plot", height = "500px"))
@@ -288,7 +279,7 @@ ui <- navbarPage(
            sidebarLayout(
              sidebarPanel(
                h5("Setting", style="font-weight: bold; color: #2980b9;"),
-               selectInput("sp_group_by", "Group by:", choices = c("Year", "Year-Month" = "Year_Month", "HA_Clade"), selected = "Year"),
+               selectInput("sp_group_by", "Group by:", choices = NULL),
                checkboxInput("sp_hide_empty_years", "Hide years without records (when Group by Year)", value = TRUE), #
                checkboxInput("sp_show_counts", "Show raw counts instead of percentage", value = FALSE),
                hr(),

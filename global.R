@@ -23,11 +23,18 @@ options(scipen = 999)
 # ==========================================
 # 1. GLOBAL DATA LOADING & SETUP
 # ==========================================
-# Version 5: More clade columns in summary
-RDS_CACHE <- "data/app_cache_flu.rds"
+# Version 8: Custom subtype sorting
+RDS_CACHE <- "data/app_cache_flu_v7.rds"
 
-# Subtypes to load
-SUBTYPES <- c("H1N1", "H3N2")
+# Subtypes to load: Dynamically detect valid subtype folders in data/
+possible_dirs <- list.dirs("data", full.names = FALSE, recursive = FALSE)
+SUBTYPES <- possible_dirs[sapply(possible_dirs, function(d) file.exists(file.path("data", d, "metadata_merged_annotated.csv")))]
+if (length(SUBTYPES) > 0) {
+  SUBTYPES <- c(sort(SUBTYPES[grepl("^H", SUBTYPES)]), sort(SUBTYPES[!grepl("^H", SUBTYPES)]))
+} else {
+  # Fallback just in case
+  SUBTYPES <- c("H1N1", "H3N2", "B_VIC", "B_YAM")
+}
 
 if (file.exists(RDS_CACHE)) {
   # ---- FAST PATH: load everything from the pre-built cache ----
@@ -35,7 +42,7 @@ if (file.exists(RDS_CACHE)) {
   cache <- readRDS(RDS_CACHE)
   
   # Check if all required objects are present
-  required_objects <- c("metadata_global", "aa_usage_by_clade", "nt_usage_by_clade", "metadata_summary_stats", "aa_usage_by_group")
+  required_objects <- c("metadata_global", "aa_usage_by_clade", "nt_usage_by_clade", "metadata_summary_stats", "aa_usage_by_group", "metadata_grouping_cols")
   if (all(required_objects %in% names(cache))) {
     metadata_global    <- cache$metadata_global
     total_raw          <- cache$total_raw
@@ -59,6 +66,7 @@ if (file.exists(RDS_CACHE)) {
     time_range_val         <- cache$time_range_val
     metadata_groups        <- cache$metadata_groups
     metadata_years         <- cache$metadata_years
+    metadata_grouping_cols <- cache$metadata_grouping_cols
     
     rm(cache)   # free the wrapper list from memory
     message("RDS cache loaded successfully.")
@@ -82,21 +90,18 @@ if (!cache_loaded) {
     if (file.exists(meta_path)) {
       message("Loading metadata for ", subtype)
       # CRITICAL: na = character() ensures 'NA' (Neuraminidase) is NOT treated as a missing value
-      meta <- read_csv(meta_path, show_col_types = FALSE, na = character(),
-                       col_select = c("Isolate_Id", "Subtype", "Collection_Date", "Location", 
-                                      "HA_clade", "NA_clade", "HA_subclade", 
-                                      "HA_proposedSubclade", "HA_short_clade", "HA_legacy_clade"))
+      meta <- read_csv(meta_path, col_types = cols(.default = "c"), show_col_types = FALSE, na = character())
       
       # Rename columns to match app expectations
       # Group = Subtype (A / H1N1)
       meta <- meta %>% 
-        dplyr::rename(Group = Subtype, 
-                      date = Collection_Date,
-                      clade = HA_clade, 
-                      G_clade = NA_clade) 
+        dplyr::rename(any_of(c(Group = "Subtype", 
+                                 date = "Collection_Date",
+                                 clade = "HA_clade", 
+                                 G_clade = "NA_clade")))
       
-      # Standardize Group name to just H1N1 or H3N2 if it's "A / H1N1"
-      meta$Group <- gsub("A / ", "", meta$Group)
+      # Force Group name to match the folder exactly (bypassing messy fasta labels like "B / Victoria")
+      meta$Group <- subtype
       
       # Parse Location into region and country
       loc_split <- stringr::str_split(meta$Location, " / ", simplify = TRUE)
@@ -108,9 +113,12 @@ if (!cache_loaded) {
   }
   metadata_global <- bind_rows(all_metadata)
   
+  # Identify dynamic grouping columns by excluding core fields
+  core_cols <- c("Isolate_Id", "Group", "date", "Location", "region", "country", "Year", "YM")
+  metadata_grouping_cols <- setdiff(colnames(metadata_global), core_cols)
+  
   # Clean up empty clade names
-  clade_cols_to_clean <- c("clade", "G_clade", "HA_subclade", "HA_proposedSubclade", "HA_short_clade", "HA_legacy_clade")
-  for(col in clade_cols_to_clean) {
+  for(col in metadata_grouping_cols) {
     if(col %in% colnames(metadata_global)) {
       metadata_global[[col]] <- ifelse(is.na(metadata_global[[col]]) | metadata_global[[col]] == "" | metadata_global[[col]] == "trace 0", "Unknown", metadata_global[[col]])
     }
@@ -204,13 +212,15 @@ if (!cache_loaded) {
   # Pre-calculate these before saving if they weren't loaded from cache
   message("Pre-aggregating metadata statistics...")
   metadata_summary_stats <- metadata_global %>%
-    group_by(Year, Group, region, country, clade, G_clade, 
-             HA_subclade, HA_proposedSubclade, HA_short_clade, HA_legacy_clade) %>%
+    group_by(across(all_of(c("Year", "Group", "region", "country", metadata_grouping_cols)))) %>%
     summarise(n = n(), .groups = "drop")
   
   total_countries_val <- length(unique(metadata_global$country))
   time_range_val <- paste(min(metadata_global$Year, na.rm=T), "-", max(metadata_global$Year, na.rm=T))
-  metadata_groups <- sort(na.omit(unique(metadata_global$Group)))
+  
+  raw_groups <- na.omit(unique(metadata_global$Group))
+  metadata_groups <- c(sort(raw_groups[grepl("^H", raw_groups)]), sort(raw_groups[!grepl("^H", raw_groups)]))
+  
   metadata_years <- sort(na.omit(unique(metadata_global$Year)), decreasing = TRUE)
 
   saveRDS(
@@ -231,7 +241,8 @@ if (!cache_loaded) {
       total_countries_val    = total_countries_val,
       time_range_val         = time_range_val,
       metadata_groups        = metadata_groups,
-      metadata_years         = metadata_years
+      metadata_years         = metadata_years,
+      metadata_grouping_cols = metadata_grouping_cols
     ),
     file = RDS_CACHE
   )
@@ -280,14 +291,8 @@ ggmsa_custom_colors <- data.frame(
 )
 
 # Generate rainbow palettes for all possible clades found in any clade column
-all_possible_clades <- sort(unique(c(
-  metadata_global$clade, 
-  metadata_global$G_clade, 
-  metadata_global$HA_subclade, 
-  metadata_global$HA_proposedSubclade, 
-  metadata_global$HA_short_clade, 
-  metadata_global$HA_legacy_clade
-)))
+all_possible_clades <- unique(unlist(lapply(metadata_grouping_cols, function(col) metadata_global[[col]])))
+all_possible_clades <- sort(na.omit(all_possible_clades))
 
 # Exclude 'Unknown' from the main rainbow generation to give it a neutral color
 actual_clades <- setdiff(all_possible_clades, "Unknown")

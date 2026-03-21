@@ -25,10 +25,21 @@ server <- function(input, output, session) {
   
   # --- HELPER: Update Grouping Choices based on Loaded Data ---
   observe({
+    req(input$global_subtype)
     # Get all available group names from the loaded lists
-    available_groups <- names(current_usage_by_group())
-    if (length(available_groups) == 0) return()
+    all_groups <- names(current_usage_by_group())
+    if (length(all_groups) == 0) return()
     
+    # Filter to only groups that have data for the currently selected subtype
+    available_groups <- c()
+    for (g in all_groups) {
+      df <- current_usage_by_group()[[g]]
+      if (!is.null(df) && any(df$Group == input$global_subtype)) {
+        available_groups <- c(available_groups, g)
+      }
+    }
+    if (length(available_groups) == 0) return()
+
     # Create a mapping for display names
     # Key = Internal Key (Year), Value = Display Label (Year)
     group_map <- setNames(available_groups, available_groups)
@@ -192,7 +203,7 @@ server <- function(input, output, session) {
                                "<br>Subtype: ", Group,
                                "<br>Sequences: ", Count))) +
       geom_col(color = "white", size = 0.2) + 
-      scale_fill_manual(values = c("H1N1" = "#3498db", "H3N2" = "#e74c3c")) +
+      scale_fill_viridis_d(option = "turbo", begin = 0.1, end = 0.9) +
       scale_y_continuous(labels = scales::comma) +
       theme_minimal(base_size = 14) +
       labs(x = "Year", y = "Sequence Count", fill = "Subtype") +
@@ -253,7 +264,7 @@ server <- function(input, output, session) {
                                               "<br>", input$clade_plot_fill, ": ", fill_val,
                                               "<br>Count: ", Count))) +
       geom_col(color = "white", size = 0.2) + 
-      { if(input$clade_plot_fill %in% c("clade", "G_clade", "HA_subclade", "HA_proposedSubclade", "HA_short_clade", "HA_legacy_clade")) 
+      { if(input$clade_plot_fill %in% metadata_grouping_cols) 
           scale_fill_manual(values = master_clade_colors) 
         else scale_fill_manual(values = grDevices::rainbow(n_colors)) } +
       theme_minimal(base_size = 14) +

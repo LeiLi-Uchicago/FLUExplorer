@@ -5,15 +5,13 @@
 ![Bioinformatics](https://img.shields.io/badge/Field-Bioinformatics-purple)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-**FLU Amino Acid Divergence Explorer** is a high-resolution, interactive web application designed for the genomic analysis of Influenza Virus (H1N1 and H3N2). Built using R and Shiny, this dashboard processes large-scale flu genomes to help researchers visualize genetic diversity, track spatial-temporal mutations, and identify amino acid substitutions across different clades and lineages.
-
+**FLU Amino Acid Divergence Explorer** is a high-resolution, interactive web application designed for the genomic analysis of niun erin
 ---
 
 ## ✨ Key Features
 
 ### 🌍 1. Dataset Insights
-* **Global Control Center:** A unified header featuring a **Global Subtype Selector** (H1N1, H3N2) and **Data Mode Toggle** (AA/NT) that controls all visualizations simultaneously.
-* **Global Clade Distribution:** Interactive Leaflet maps featuring pie charts to visualize the geographic spread of HA/NA clades globally.
+* **Global Control C:Iab
 * **Temporal & Regional Breakdown:** Interactive Plotly charts showing the seasonality of sequencing efforts and geographic hotspots.
 
 ### 🔬 2. Single Position Explorer
