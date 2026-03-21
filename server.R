@@ -118,6 +118,36 @@ server <- function(input, output, session) {
   output$total_countries <- renderText({ paste0(total_countries_val) })
   output$time_range <- renderText({ time_range_val })
 
+  # --- DYNAMIC CLADE PLOT FILL DROPDOWN ---
+  observeEvent(input$clade_plot_subtype, {
+    req(input$clade_plot_subtype)
+    
+    # Find valid groups for this subtype directly from aa_usage files
+    all_usage_groups <- names(aa_usage_by_group)
+    valid_groups <- c()
+    
+    for (g in all_usage_groups) {
+      if (g %in% c("Year", "Year_Month")) next
+      df <- aa_usage_by_group[[g]]
+      if (!is.null(df) && any(df$Group == input$clade_plot_subtype)) {
+        valid_groups <- c(valid_groups, g)
+      }
+    }
+    
+    # Map usage group names to their respective metadata columns
+    meta_cols <- valid_groups
+    meta_cols[meta_cols == "HA_clade"] <- "clade"
+    meta_cols[meta_cols == "NA_clade"] <- "G_clade"
+    
+    display_names <- gsub("_", " ", valid_groups)
+    display_names <- gsub("clade", "Clade", display_names, ignore.case = TRUE)
+    
+    choices <- c(setNames(meta_cols, display_names), c("Region" = "region", "Country" = "country"))
+    
+    current_sel <- if (!is.null(input$clade_plot_fill) && input$clade_plot_fill %in% choices) input$clade_plot_fill else choices[1]
+    updateSelectInput(session, "clade_plot_fill", choices = choices, selected = current_sel)
+  })
+
   # --- REACTIVE MAP DATA ---
   # map_data_filtered <- reactive({
   #   req(input$global_subtype, input$map_geo_level, input$map_clade_type, input$map_year)
