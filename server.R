@@ -219,61 +219,47 @@ server <- function(input, output, session) {
   stats_metadata_filtered <- reactive({
     req(input$stats_year_range)
     
-    withProgress(message = "Filtering Global Metadata...", value = 0.5, {
-      major_continents <- c("Africa", "Asia", "Europe", "North America", "South America", "Oceania")
-      # PERFORMANCE: use pre-aggregated summary instead of full metadata_global
-      res <- metadata_summary_stats %>%
-        filter(Year >= input$stats_year_range[1], Year <= input$stats_year_range[2]) %>%
-        filter(region %in% major_continents)
-      
-      setProgress(1)
-      return(res)
-    })
+    major_continents <- c("Africa", "Asia", "Europe", "North America", "South America", "Oceania")
+    
+    metadata_summary_stats %>%
+      filter(Year >= input$stats_year_range[1], Year <= input$stats_year_range[2]) %>%
+      filter(region %in% major_continents)
   })
 
   output$stats_time_plot <- renderPlotly({
-    p <- stats_metadata_filtered() %>%
+    plot_data <- stats_metadata_filtered() %>%
       group_by(Year, Group) %>%
-      summarise(Count = sum(n), .groups = "drop") %>%
-      ggplot(aes(x = Year, y = Count, fill = Group, group = Group, 
-                 text = paste0("Year: ", Year,
-                               "<br>Subtype: ", Group,
-                               "<br>Sequences: ", Count))) +
-      geom_col(color = "white", size = 0.2) + 
-      scale_fill_viridis_d(option = "turbo", begin = 0.1, end = 0.9) +
-      scale_y_continuous(labels = scales::comma) +
-      theme_minimal(base_size = 14) +
-      labs(x = "Year", y = "Sequence Count", fill = "Subtype") +
-      theme(
-        axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
-        panel.grid.major.x = element_blank(),
-        legend.position = "bottom"
-      )    
-    ggplotly(p, tooltip = "text") %>% 
-      layout(yaxis = list(tickformat = ",")) %>%
+      summarise(Count = sum(n), .groups = "drop")
+      
+    n_groups <- length(unique(plot_data$Group))
+    my_colors <- setNames(viridis::viridis(n_groups, option = "turbo", begin = 0.1, end = 0.9), sort(unique(plot_data$Group)))
+    
+    plot_ly(plot_data, x = ~Year, y = ~Count, color = ~Group, colors = my_colors,
+            type = "bar", hoverinfo = "text",
+            text = ~paste0("Year: ", Year, "<br>Subtype: ", Group, "<br>Sequences: ", scales::comma(Count)),
+            marker = list(line = list(color = 'white', width = 0.5))) %>%
+      layout(barmode = 'stack',
+             xaxis = list(title = "Year", tickangle = -45, tickfont = list(family = "Arial", size = 12)),
+             yaxis = list(title = "Sequence Count", tickformat = ","),
+             legend = list(orientation = 'h', x = 0.5, xanchor = 'center', y = -0.2),
+             margin = list(b = 50)) %>%
       config(displayModeBar = FALSE)
   })
 
   output$stats_geo_plot <- renderPlotly({
-    p <- stats_metadata_filtered() %>%
+    plot_data <- stats_metadata_filtered() %>%
       group_by(region) %>%
-      summarise(Count = sum(n), .groups = "drop") %>%
-      mutate(region_ord = reorder(region, Count)) %>% 
-      ggplot(aes(x = region_ord, y = Count, fill = region, group = region, 
-                 text = paste0("Region: ", region, "<br>Count: ", Count))) +
-      geom_col() +
-      scale_y_continuous(labels = scales::comma) +
-      scale_fill_viridis_d(option = "mako") +
-      theme_minimal(base_size = 14) +
-      labs(x = "Region", y = "Count") +
-      theme(
-        axis.text.x = element_text(face = "bold"),
-        axis.text.y = element_text(face = "bold"),
-        legend.position = "none"
-      )
-
-    ggplotly(p, tooltip = "text") %>% 
-      layout(showlegend = FALSE, yaxis = list(tickformat = ",")) %>% 
+      summarise(Count = sum(n), .groups = "drop")
+      
+    n_regions <- length(unique(plot_data$region))
+    my_colors <- setNames(viridis::viridis(n_regions, option = "mako"), sort(unique(plot_data$region)))
+    
+    plot_ly(plot_data, x = ~reorder(region, Count), y = ~Count, color = ~region, colors = my_colors,
+            type = "bar", hoverinfo = "text",
+            text = ~paste0("Region: ", region, "<br>Count: ", scales::comma(Count))) %>%
+      layout(showlegend = FALSE,
+             xaxis = list(title = "Region", tickfont = list(family = "Arial", size = 12)),
+             yaxis = list(title = "Count", tickformat = ",")) %>%
       config(displayModeBar = FALSE)
   })
 
@@ -290,31 +276,23 @@ server <- function(input, output, session) {
     
     validate(need(nrow(summary_df) > 0, "No data available for the current filters."))
     
-    fill_items <- unique(summary_df$fill_val)
-    n_colors <- length(fill_items)
+    fill_items <- sort(unique(summary_df$fill_val))
     
-    p <- ggplot(summary_df, aes(x = Year, 
-                                y = Count, 
-                                fill = fill_val,
-                                group = fill_val,
-                                text = paste0("Year: ", Year,
-                                              "<br>", input$clade_plot_fill, ": ", fill_val,
-                                              "<br>Count: ", Count))) +
-      geom_col(color = "white", size = 0.2) + 
-      { if(input$clade_plot_fill %in% metadata_grouping_cols) 
-          scale_fill_manual(values = master_clade_colors) 
-        else scale_fill_manual(values = grDevices::rainbow(n_colors)) } +
-      theme_minimal(base_size = 14) +
-      theme(
-        axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
-        axis.title = element_text(face = "bold"),
-        legend.position = "right",
-        panel.grid.major.x = element_blank()
-      ) +
-      labs(x = "Year", y = "Sequence Count", fill = "")
+    actual_items <- setdiff(fill_items, "Unknown")
+    my_colors <- setNames(grDevices::rainbow(length(actual_items)), actual_items)
     
-    ggplotly(p, tooltip = "text") %>% 
-      layout(legend = list(title = list(text = ""))) %>%
+    if ("Unknown" %in% fill_items) {
+      my_colors["Unknown"] <- "#d3d3d3"
+    }
+    
+    plot_ly(summary_df, x = ~Year, y = ~Count, color = ~fill_val, colors = my_colors,
+            type = "bar", hoverinfo = "text",
+            text = ~paste0("Year: ", Year, "<br>", input$clade_plot_fill, ": ", fill_val, "<br>Count: ", scales::comma(Count)),
+            marker = list(line = list(color = 'white', width = 0.5))) %>%
+      layout(barmode = 'stack',
+             xaxis = list(title = "Year", tickangle = -45, tickfont = list(family = "Arial", size = 12)),
+             yaxis = list(title = "Sequence Count", tickformat = ","),
+             legend = list(title = list(text = ""))) %>%
       config(displayModeBar = FALSE)
   })
   
