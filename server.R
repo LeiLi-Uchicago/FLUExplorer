@@ -85,11 +85,73 @@ server <- function(input, output, session) {
   observeEvent(list(input$global_subtype, input$variation_type), { updateSelectInput(session, "lol_gene", choices = current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Gene) %>% unique() %>% sort()) })
   observeEvent(list(input$global_subtype, input$variation_type), { updateSelectInput(session, "heat_gene", choices = current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Gene) %>% unique() %>% sort()) })
   
-  # --- HELPER: Update Clade Dropdowns based on Subtype ---
+  # --- HELPER: Update Pairwise Grouping Choices ---
   observeEvent(list(input$global_subtype, input$variation_type), {
-    clades <- current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Clade) %>% unique() %>% sort()
-    updateSelectInput(session, "pw_clade1", choices = clades, selected = clades[1])
-    updateSelectInput(session, "pw_clade2", choices = clades, selected = if(length(clades)>1) clades[2] else clades[1])
+    dir_path <- paste0("data/", input$global_subtype, "/", input$variation_type, "/")
+    files <- list.files(dir_path, pattern = paste0("^", tolower(input$variation_type), "_usage_by_.*\\.rds$"))
+    available_groups <- sub(paste0("^", tolower(input$variation_type), "_usage_by_(.*)\\.rds$"), "\\1", files)
+    
+    if (length(available_groups) == 0) return()
+    
+    group_map <- setNames(available_groups, available_groups)
+    if ("Year_Month" %in% names(group_map)) names(group_map)[group_map == "Year_Month"] <- "Year-Month"
+    for (i in which(!(group_map %in% c("Year", "Year_Month")))) {
+      names(group_map)[i] <- gsub("_", " ", group_map[i])
+    }
+    
+    final_choices <- setNames(available_groups, names(group_map))
+    
+    current_sel <- if (!is.null(input$sp_group_by) && input$sp_group_by %in% available_groups) {
+      input$sp_group_by
+    } else if (!is.null(input$pw_group_by) && input$pw_group_by %in% available_groups) {
+      input$pw_group_by
+    } else {
+      if ("HA_clade" %in% available_groups) "HA_clade" else available_groups[1]
+    }
+    updateSelectInput(session, "pw_group_by", choices = final_choices, selected = current_sel)
+  })
+
+  # --- HELPER: Sync Single Position and Pairwise Groupings ---
+  observeEvent(input$sp_group_by, {
+    if (!is.null(input$sp_group_by) && !is.null(input$pw_group_by) && input$sp_group_by != input$pw_group_by) {
+      updateSelectInput(session, "pw_group_by", selected = input$sp_group_by)
+    }
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$pw_group_by, {
+    if (!is.null(input$pw_group_by) && !is.null(input$sp_group_by) && input$pw_group_by != input$sp_group_by) {
+      updateSelectInput(session, "sp_group_by", selected = input$pw_group_by)
+    }
+  }, ignoreInit = TRUE)
+
+  pairwise_usage_data <- reactive({
+    req(input$global_subtype, input$variation_type, input$pw_group_by)
+    var_lower <- tolower(input$variation_type)
+    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", var_lower, "_usage_by_", input$pw_group_by, ".rds")
+    
+    df <- get_lazy_table(rds_file)
+    if (!is.null(df)) {
+      if (input$pw_group_by %in% colnames(df)) {
+        df <- df %>% dplyr::rename(Clade = !!sym(input$pw_group_by))
+      }
+      return(df)
+    }
+    return(data.frame(Group=character(), Gene=character(), Clade=character(), Position=numeric(), AminoAcid=character(), Count=numeric()))
+  })
+
+  # --- HELPER: Update Clade Dropdowns based on Subtype ---
+  observeEvent(pairwise_usage_data(), {
+    req(nrow(pairwise_usage_data()) > 0)
+    
+    special_values <- c("Unknown", "unassigned", "Unassigned")
+    clades <- pairwise_usage_data() %>% filter(Group == input$global_subtype) %>% pull(Clade) %>% unique() %>% sort()
+    present_specials <- intersect(special_values, clades)
+    if (length(present_specials) > 0) {
+      clades <- c(present_specials, setdiff(clades, present_specials))
+    }
+    
+    updateSelectInput(session, "pw_clade1", choices = clades, selected = if(length(clades)>0) clades[1] else NULL)
+    updateSelectInput(session, "pw_clade2", choices = clades, selected = if(length(clades)>1) clades[2] else if(length(clades)>0) clades[1] else NULL)
   })
   observeEvent(list(input$global_subtype, input$ent_gene, input$variation_type), {
     req(input$global_subtype, input$ent_gene)
@@ -637,7 +699,7 @@ server <- function(input, output, session) {
   clicked_data_val <- reactiveValues(gene = NULL, pos = NULL)
   
   get_aggregated_clade <- function(subtype, clade_name, min_freq) {
-    current_usage_by_clade() %>% 
+    pairwise_usage_data() %>% 
       filter(Group == subtype, Clade == clade_name) %>% 
       # NEW: Exclude unknowns and gaps before any aggregation
       filter(!(AminoAcid %in% c("X", "-"))) %>% 
@@ -678,10 +740,10 @@ server <- function(input, output, session) {
     
     display_data <- data %>% 
       mutate(Position = sprintf('<a href="#" onclick="Shiny.setInputValue(\'modal_clicked\', \'%s|%s\', {priority: \'event\'});"><strong>%s</strong></a>', Gene, Position, Position)) %>% 
-      dplyr::rename(`Clade 1 AA` = Clade1_AA, `Clade 1 Freq (%)` = Clade1_Freq, `Clade 2 AA` = Clade2_AA, `Clade 2 Freq (%)` = Clade2_Freq)
+      dplyr::rename(`Group 1 AA` = Clade1_AA, `Group 1 Freq (%)` = Clade1_Freq, `Group 2 AA` = Clade2_AA, `Group 2 Freq (%)` = Clade2_Freq)
     
     datatable(display_data, escape = FALSE, options = list(pageLength = 15, autoWidth = TRUE), rownames = FALSE) %>% 
-      formatRound(c("Clade 1 Freq (%)", "Clade 2 Freq (%)"), digits = 2)
+      formatRound(c("Group 1 Freq (%)", "Group 2 Freq (%)"), digits = 2)
   })
   
   observeEvent(input$modal_clicked, {
@@ -709,7 +771,7 @@ server <- function(input, output, session) {
     # Capture variation type once
     is_aa <- (input$variation_type == "AA")
     
-    res <- current_usage_by_clade() %>% 
+    res <- pairwise_usage_data() %>% 
       filter(Group == input$global_subtype, Gene == clicked_data_val$gene, Position == clicked_data_val$pos) %>%
       # NEW: Remove "X" and "-" before any calculations
       filter(!(AminoAcid %in% c("X", "-")))
@@ -731,6 +793,8 @@ server <- function(input, output, session) {
       mutate(`Frequency(%)` = (Count / Total_in_Clade) * 100) %>%
       ungroup()
       
+    group_col <- input$pw_group_by
+    
     # Pre-calculate a clean tooltip text to avoid complex logic inside aes()
     res <- res %>%
       mutate(
@@ -744,7 +808,7 @@ server <- function(input, output, session) {
           TRUE ~ ""
         ),
         tooltip_text = as.character(paste0(
-          "Clade: ", Clade, 
+          group_col, ": ", Clade, 
           "<br>Position: ", clicked_data_val$pos, numbering_text,
           "<br>", if(is_aa) "Amino Acid: " else "Nucleotide: ", AminoAcid, 
           "<br>Frequency: ", round(!!sym("Frequency(%)"), 2), "%",
@@ -783,7 +847,7 @@ server <- function(input, output, session) {
       scale_fill_manual(values = current_colors(), drop = FALSE) + 
       scale_y_continuous(expand = c(0,0), limits = c(0, 105)) + 
       scale_x_discrete(labels = html_labels) + 
-      labs(x = "Clade", y = "Frequency (%)", fill = variant_label()) + 
+      labs(x = input$pw_group_by, y = "Frequency (%)", fill = variant_label()) + 
       theme_minimal(base_size = input$modal_font_size) + 
       theme(
         axis.text.x = element_markdown(angle = 45, hjust = 1, vjust = 1), 
@@ -813,8 +877,10 @@ server <- function(input, output, session) {
     cols_to_show <- c("Clade", "AminoAcid", "Count", "Total_in_Clade", "Frequency(%)")
     if("Codon_Usage" %in% colnames(data)) cols_to_show <- c(cols_to_show, "Codon_Usage")
     
-    datatable(data %>% dplyr::select(all_of(cols_to_show)) %>% arrange(Clade, desc(`Frequency(%)`)), 
-              options = list(pageLength = 5, autoWidth = TRUE), rownames = FALSE) %>% formatRound("Frequency(%)", digits = 2) 
+    display_data <- data %>% dplyr::select(all_of(cols_to_show)) %>% arrange(Clade, desc(`Frequency(%)`)) %>% 
+      dplyr::rename(!!sym(input$pw_group_by) := Clade)
+    
+    datatable(display_data, options = list(pageLength = 5, autoWidth = TRUE), rownames = FALSE) %>% formatRound("Frequency(%)", digits = 2) 
   })
   
   output$downloadPairwiseCSV <- downloadHandler(
@@ -837,7 +903,7 @@ server <- function(input, output, session) {
       for(i in 1:nrow(diffs)) {
         r_gene <- diffs$Gene[i]; r_pos <- diffs$Position[i]
         
-        pos_data <- current_usage_by_clade() %>% 
+        pos_data <- pairwise_usage_data() %>% 
           filter(Group == input$global_subtype, Gene == r_gene, Position == r_pos) %>%
           # Step 1: Remove "X" and "-" before any calculations
           filter(!(AminoAcid %in% c("X", "-"))) %>%

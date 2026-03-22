@@ -327,8 +327,9 @@ ui <- navbarPage(
   tabPanel("Pairwise Comparison",
            sidebarLayout(
              sidebarPanel(
-               selectInput("pw_clade1", "Clade 1:", choices = NULL),
-               selectInput("pw_clade2", "Clade 2:", choices = NULL),
+               selectInput("pw_group_by", "Group by:", choices = NULL),
+               selectInput("pw_clade1", "Group 1:", choices = NULL),
+               selectInput("pw_clade2", "Group 2:", choices = NULL),
                numericInput("pw_min_freq", "Minimum Dominant Frequency (%):", value = 90.0, min = 50.0, max = 100.0, step = 1.0),
                hr(),
                downloadButton("downloadPairwiseCSV", "Download Table (CSV)", class = "btn-primary", style="margin-bottom: 5px; width: 100%;"),
