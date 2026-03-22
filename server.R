@@ -28,8 +28,8 @@ server <- function(input, output, session) {
       }
     }
     
-    if (file.exists(rds_file)) {
-      df <- readRDS(rds_file)
+    df <- get_lazy_table(rds_file)
+    if (!is.null(df)) {
       if ("HA_clade" %in% colnames(df)) {
         df <- df %>% dplyr::rename(Clade = HA_clade)
       } else {
@@ -336,30 +336,21 @@ server <- function(input, output, session) {
     updateNumericInput(session, "sp_position", value = as.numeric(row_data$Position))
   })
   
-  trigger_data <- reactive({
-    list(input$global_subtype, input$sp_gene, input$sp_position, input$sp_group_by)
-  }) %>% debounce(100) 
-  
-  current_sp_group_data <- reactive({
-    req(input$global_subtype, input$variation_type, input$sp_group_by)
-    var_lower <- tolower(input$variation_type)
-    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", var_lower, "_usage_by_", input$sp_group_by, ".rds")
-    if (file.exists(rds_file)) {
-      return(readRDS(rds_file))
-    }
-    return(NULL)
-  })
-
   sp_filtered_data <- reactive({
-    vals <- trigger_data()
-    subtype   <- as.character(vals[[1]])
-    gene      <- as.character(vals[[2]])
-    pos       <- as.numeric(vals[[3]])
-    group_col <- as.character(vals[[4]]) 
+    subtype   <- input$global_subtype
+    gene      <- input$sp_gene
+    pos       <- input$sp_position
+    group_col <- input$sp_group_by 
+    var_type  <- input$variation_type
     
-    data <- current_sp_group_data()
+    req(subtype, gene, pos, group_col, var_type)
+    
+    var_lower <- tolower(var_type)
+    rds_file <- paste0("data/", subtype, "/", var_type, "/", var_lower, "_usage_by_", group_col, ".rds")
+    data <- get_lazy_table(rds_file)
     
     validate(need(!is.null(data), paste("Table not found for group:", group_col)))
+    validate(need(group_col %in% colnames(data), "Updating data..."))
     
     # 1. Basic filtering by gene, position, subtype
     filtered <- data %>% 
@@ -370,7 +361,7 @@ server <- function(input, output, session) {
     # 3. Recalculate totals and frequencies based on remaining valid sequences
     # This ensures your plot bars correctly represent 100% of the available data
     filtered <- filtered %>%
-      group_by(across(all_of(group_col))) %>%
+      group_by(!!sym(group_col)) %>%
       mutate(
         Valid_Total = sum(Count), # This is the total count of valid AAs/NTs for the group
         `Frequency(%)` = (Count / Valid_Total) * 100
@@ -532,6 +523,10 @@ server <- function(input, output, session) {
     # Select columns to show, including Codon_Usage if present
     cols_to_show <- c(input$sp_group_by, "AminoAcid", "Count", "Valid_Total", "Frequency(%)")
     if("Codon_Usage" %in% colnames(data)) cols_to_show <- c(cols_to_show, "Codon_Usage")
+    
+    # Safely intersect to completely prevent "Can't subset elements that don't exist" errors
+    cols_to_show <- intersect(cols_to_show, colnames(data))
+    req(input$sp_group_by %in% colnames(data))
     
     datatable(
       data %>% dplyr::select(all_of(cols_to_show)) %>% arrange(!!sym(input$sp_group_by), desc(`Frequency(%)`)), 

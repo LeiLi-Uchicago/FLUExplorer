@@ -259,3 +259,34 @@ master_clade_colors["Unknown"] <- "#d3d3d3"
 # For backward compatibility with server logic that expects specific names
 clade_colors_vec   <- master_clade_colors
 g_clade_colors_vec <- master_clade_colors
+
+# ==========================================
+# 3. LAZY-LOADING CACHE MECHANISM (LRU)
+# ==========================================
+lazy_cache <- new.env(parent = emptyenv())
+lazy_cache$keys <- character(0)
+lazy_cache$data <- list()
+
+get_lazy_table <- function(rds_path, max_tables = 5) {
+  if (!file.exists(rds_path)) return(NULL)
+  
+  if (rds_path %in% lazy_cache$keys) {
+    # Move to the end of the line (most recently used)
+    lazy_cache$keys <- c(setdiff(lazy_cache$keys, rds_path), rds_path)
+    return(lazy_cache$data[[rds_path]])
+  }
+  
+  # Read from disk and store in cache
+  df <- readRDS(rds_path)
+  lazy_cache$keys <- c(lazy_cache$keys, rds_path)
+  lazy_cache$data[[rds_path]] <- df
+  
+  # Evict oldest if limit exceeded
+  if (length(lazy_cache$keys) > max_tables) {
+    evict <- lazy_cache$keys[1]
+    lazy_cache$keys <- lazy_cache$keys[-1]
+    lazy_cache$data[[evict]] <- NULL
+  }
+  
+  return(df)
+}
