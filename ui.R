@@ -194,10 +194,14 @@ ui <- navbarPage(
              
              fluidRow(
                column(12, hr()),
-               column(6, selectInput("clade_plot_subtype", "Filter Subtype:", 
+               column(4, selectInput("clade_plot_subtype", "Filter Subtype:", 
                                      choices = metadata_groups, 
                                      selected = metadata_groups[1])),
-               column(6, selectInput("clade_plot_fill", "Sub-Category (Color):", choices = NULL)),
+               column(4, selectInput("clade_plot_fill", "Sub-Category (Color):", choices = NULL)),
+               column(4, selectInput("clade_plot_palette", "Color Palette:", 
+                                     choices = c("Viridis" = "viridis", "Plasma" = "plasma", 
+                                                 "Magma" = "magma", "Inferno" = "inferno", 
+                                                 "Cividis" = "cividis", "Turbo" = "turbo", "Rainbow" = "rainbow"), selected = "viridis")),
                column(12,
                       h4("Custom Dataset Breakdown by Year", style="font-weight: bold; margin-top: 10px;"),
                       withWaiter(plotlyOutput("stats_clade_plot", height = "500px"))

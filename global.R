@@ -250,7 +250,7 @@ all_possible_clades <- sort(na.omit(all_possible_clades))
 
 # Exclude 'Unknown' from the main rainbow generation to give it a neutral color
 actual_clades <- setdiff(all_possible_clades, "Unknown")
-master_clade_colors <- grDevices::rainbow(length(actual_clades))
+master_clade_colors <- viridis::viridis(length(actual_clades))
 names(master_clade_colors) <- actual_clades
 
 # Add neutral color for Unknown

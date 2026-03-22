@@ -264,7 +264,7 @@ server <- function(input, output, session) {
   })
 
   output$stats_clade_plot <- renderPlotly({
-    req(input$clade_plot_fill, input$clade_plot_subtype)
+    req(input$clade_plot_fill, input$clade_plot_subtype, input$clade_plot_palette)
 
     plot_df <- stats_metadata_filtered()
     # No longer check for "All" because it's removed from UI
@@ -279,8 +279,11 @@ server <- function(input, output, session) {
     fill_items <- sort(unique(summary_df$fill_val))
     
     actual_items <- setdiff(fill_items, "Unknown")
-    my_colors <- setNames(grDevices::rainbow(length(actual_items)), actual_items)
-    
+    if (input$clade_plot_palette == "rainbow") {
+      my_colors <- setNames(grDevices::rainbow(length(actual_items)), actual_items)
+    } else {
+      my_colors <- setNames(viridis::viridis(length(actual_items), option = input$clade_plot_palette), actual_items)
+    }
     if ("Unknown" %in% fill_items) {
       my_colors["Unknown"] <- "#d3d3d3"
     }
