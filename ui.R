@@ -219,9 +219,10 @@ ui <- navbarPage(
                       fluidPage(
                         wellPanel(
                           fluidRow(
-                            column(4, helpText("Calculates Shannon Entropy to identify highly conserved valleys and hypervariable peaks across the entire gene. Subtype is controlled globally.")),
-                            column(4, selectInput("ent_gene", "Gene:", choices = NULL)),
-                            column(4, selectInput("ent_clade", "Clade:", choices = NULL))
+                            column(3, helpText("Calculates Shannon Entropy to identify highly conserved valleys and hypervariable peaks across the entire gene. Subtype is controlled globally.")),
+                            column(3, selectInput("ent_group_by", "Group by:", choices = NULL)),
+                            column(3, selectInput("ent_gene", "Gene:", choices = NULL)),
+                            column(3, selectInput("ent_group", "Group:", choices = NULL))
                           ),
                           fluidRow(
                             column(3, sliderInput("ent_min_seqs", "Min Sequences:", min = 0, max = 1000, value = 10, step = 10)),
@@ -239,13 +240,14 @@ ui <- navbarPage(
                       fluidPage(
                         wellPanel(
                           fluidRow(
-                            column(4, helpText("Visualize fixed amino acid mutations in a Target Clade compared to a Reference Clade. Subtype is controlled globally.")),
-                            column(4, selectInput("lol_gene", "Gene:", choices = NULL)),
-                            column(4, numericInput("lol_min_freq", "Min Dominant Freq (%):", value = 90.0, min = 50.0, max = 100.0))
+                            column(3, helpText("Visualize fixed amino acid mutations in a Target Group compared to a Reference Group. Subtype is controlled globally.")),
+                            column(3, selectInput("lol_group_by", "Group by:", choices = NULL)),
+                            column(3, selectInput("lol_gene", "Gene:", choices = NULL)),
+                            column(3, numericInput("lol_min_freq", "Min Dominant Freq (%):", value = 90.0, min = 50.0, max = 100.0))
                           ),
                           fluidRow(
-                            column(3, selectInput("lol_ref_clade", "Reference Clade:", choices = NULL)),
-                            column(3, selectInput("lol_tar_clade", "Target Clade:", choices = NULL)),
+                            column(3, selectInput("lol_ref_group", "Reference Group:", choices = NULL)),
+                            column(3, selectInput("lol_tar_group", "Target Group:", choices = NULL)),
                             column(2, sliderInput("lol_font_size", "Font Size:", min = 10, max = 24, value = 14, step = 1)),
                             column(2, radioButtons("lol_plot_format", "Format:", choices = c("PNG", "PDF"), inline = TRUE)),
                             column(2, downloadButton("downloadLolPlot", "Download Plot", class = "btn-info", style="margin-top: 25px; width: 100%;"))
@@ -261,9 +263,10 @@ ui <- navbarPage(
                       fluidPage(
                         wellPanel(
                           fluidRow(
-                            column(4, helpText("Interactive Multiple Sequence Alignment. Subtype is controlled globally.")),
-                            column(4, selectInput("heat_gene", "Gene:", choices = NULL)),
-                            column(4, div(style = "margin-top: 25px;", checkboxInput("show_mut_only", "Show Mutations Only", value = FALSE)))
+                            column(3, helpText("Interactive Multiple Sequence Alignment. Subtype is controlled globally.")),
+                            column(3, selectInput("heat_group_by", "Group by:", choices = NULL)),
+                            column(3, selectInput("heat_gene", "Gene:", choices = NULL)),
+                            column(3, div(style = "margin-top: 25px;", checkboxInput("show_mut_only", "Show Mutations Only", value = FALSE)))
                           )
                         ),
                         fluidRow(

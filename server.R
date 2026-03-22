@@ -85,7 +85,7 @@ server <- function(input, output, session) {
   observeEvent(list(input$global_subtype, input$variation_type), { updateSelectInput(session, "lol_gene", choices = current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Gene) %>% unique() %>% sort()) })
   observeEvent(list(input$global_subtype, input$variation_type), { updateSelectInput(session, "heat_gene", choices = current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Gene) %>% unique() %>% sort()) })
   
-  # --- HELPER: Update Pairwise Grouping Choices ---
+  # --- HELPER: Update Pairwise & Landscape Grouping Choices ---
   observeEvent(list(input$global_subtype, input$variation_type), {
     dir_path <- paste0("data/", input$global_subtype, "/", input$variation_type, "/")
     files <- list.files(dir_path, pattern = paste0("^", tolower(input$variation_type), "_usage_by_.*\\.rds$"))
@@ -109,18 +109,48 @@ server <- function(input, output, session) {
       if ("HA_clade" %in% available_groups) "HA_clade" else available_groups[1]
     }
     updateSelectInput(session, "pw_group_by", choices = final_choices, selected = current_sel)
+    updateSelectInput(session, "ent_group_by", choices = final_choices, selected = current_sel)
+    updateSelectInput(session, "lol_group_by", choices = final_choices, selected = current_sel)
+    updateSelectInput(session, "heat_group_by", choices = final_choices, selected = current_sel)
   })
 
-  # --- HELPER: Sync Single Position and Pairwise Groupings ---
+  # --- HELPER: Sync Single Position and Other Groupings ---
   observeEvent(input$sp_group_by, {
     if (!is.null(input$sp_group_by) && !is.null(input$pw_group_by) && input$sp_group_by != input$pw_group_by) {
       updateSelectInput(session, "pw_group_by", selected = input$sp_group_by)
+    }
+    if (!is.null(input$sp_group_by) && !is.null(input$ent_group_by) && input$sp_group_by != input$ent_group_by) {
+      updateSelectInput(session, "ent_group_by", selected = input$sp_group_by)
+    }
+    if (!is.null(input$sp_group_by) && !is.null(input$lol_group_by) && input$sp_group_by != input$lol_group_by) {
+      updateSelectInput(session, "lol_group_by", selected = input$sp_group_by)
+    }
+    if (!is.null(input$sp_group_by) && !is.null(input$heat_group_by) && input$sp_group_by != input$heat_group_by) {
+      updateSelectInput(session, "heat_group_by", selected = input$sp_group_by)
     }
   }, ignoreInit = TRUE)
   
   observeEvent(input$pw_group_by, {
     if (!is.null(input$pw_group_by) && !is.null(input$sp_group_by) && input$pw_group_by != input$sp_group_by) {
       updateSelectInput(session, "sp_group_by", selected = input$pw_group_by)
+    }
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$ent_group_by, {
+    if (!is.null(input$ent_group_by) && !is.null(input$sp_group_by) && input$ent_group_by != input$sp_group_by) {
+      updateSelectInput(session, "sp_group_by", selected = input$ent_group_by)
+    }
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$lol_group_by, {
+    if (!is.null(input$lol_group_by) && !is.null(input$sp_group_by) && input$lol_group_by != input$sp_group_by) {
+      updateSelectInput(session, "sp_group_by", selected = input$lol_group_by)
+    }
+  }, ignoreInit = TRUE)
+
+  observeEvent(input$heat_group_by, {
+    if (!is.null(input$heat_group_by) && !is.null(input$sp_group_by) && input$heat_group_by != input$sp_group_by) {
+      updateSelectInput(session, "sp_group_by", selected = input$heat_group_by)
     }
   }, ignoreInit = TRUE)
 
@@ -151,6 +181,51 @@ server <- function(input, output, session) {
     return(data.frame(Group=character(), Gene=character(), Clade=character(), Position=numeric(), AminoAcid=character(), Count=numeric()))
   })
 
+  ent_usage_data <- reactive({
+    req(input$global_subtype, input$variation_type, input$ent_group_by)
+    var_lower <- tolower(input$variation_type)
+    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", var_lower, "_usage_by_", input$ent_group_by, ".rds")
+    
+    df <- get_lazy_table(rds_file)
+    if (!is.null(df)) {
+      if (input$ent_group_by %in% colnames(df)) {
+        df <- df %>% dplyr::rename(Clade = !!sym(input$ent_group_by))
+      }
+      return(df)
+    }
+    return(data.frame(Group=character(), Gene=character(), Clade=character(), Position=numeric(), AminoAcid=character(), Count=numeric()))
+  })
+
+  lol_usage_data <- reactive({
+    req(input$global_subtype, input$variation_type, input$lol_group_by)
+    var_lower <- tolower(input$variation_type)
+    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", var_lower, "_usage_by_", input$lol_group_by, ".rds")
+    
+    df <- get_lazy_table(rds_file)
+    if (!is.null(df)) {
+      if (input$lol_group_by %in% colnames(df)) {
+        df <- df %>% dplyr::rename(Clade = !!sym(input$lol_group_by))
+      }
+      return(df)
+    }
+    return(data.frame(Group=character(), Gene=character(), Clade=character(), Position=numeric(), AminoAcid=character(), Count=numeric()))
+  })
+
+  heat_usage_data <- reactive({
+    req(input$global_subtype, input$variation_type, input$heat_group_by)
+    var_lower <- tolower(input$variation_type)
+    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", var_lower, "_usage_by_", input$heat_group_by, ".rds")
+    
+    df <- get_lazy_table(rds_file)
+    if (!is.null(df)) {
+      if (input$heat_group_by %in% colnames(df)) {
+        df <- df %>% dplyr::rename(Clade = !!sym(input$heat_group_by))
+      }
+      return(df)
+    }
+    return(data.frame(Group=character(), Gene=character(), Clade=character(), Position=numeric(), AminoAcid=character(), Count=numeric()))
+  })
+
   # --- HELPER: Update Clade Dropdowns based on Subtype ---
   observeEvent(pairwise_usage_data(), {
     req(nrow(pairwise_usage_data()) > 0)
@@ -165,18 +240,24 @@ server <- function(input, output, session) {
     updateSelectInput(session, "pw_clade1", choices = clades, selected = if(length(clades)>0) clades[1] else NULL)
     updateSelectInput(session, "pw_clade2", choices = clades, selected = if(length(clades)>1) clades[2] else if(length(clades)>0) clades[1] else NULL)
   })
-  observeEvent(list(input$global_subtype, input$ent_gene, input$variation_type), {
-    req(input$global_subtype, input$ent_gene)
-    clade_choices <- current_usage_by_clade() %>% 
+  observeEvent(list(ent_usage_data(), input$ent_gene), {
+    req(nrow(ent_usage_data()) > 0, input$ent_gene)
+    clade_choices <- ent_usage_data() %>% 
       filter(Group == input$global_subtype, Gene == input$ent_gene) %>% 
       pull(Clade) %>% unique() %>% sort()
     
-    updateSelectInput(session, "ent_clade", choices = c("All", clade_choices), selected = "All")
+    updateSelectInput(session, "ent_group", choices = c("All", clade_choices), selected = "All")
   })
-  observeEvent(list(input$global_subtype, input$variation_type), {
-    clades <- current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Clade) %>% unique() %>% sort()
-    updateSelectInput(session, "lol_ref_clade", choices = clades, selected = clades[1])
-    updateSelectInput(session, "lol_tar_clade", choices = clades, selected = if(length(clades)>1) clades[2] else clades[1])
+  observeEvent(lol_usage_data(), {
+    req(nrow(lol_usage_data()) > 0)
+    clades <- lol_usage_data() %>% filter(Group == input$global_subtype) %>% pull(Clade) %>% unique() %>% sort()
+    special_values <- c("Unknown", "unassigned", "Unassigned")
+    present_specials <- intersect(special_values, clades)
+    if (length(present_specials) > 0) {
+      clades <- c(present_specials, setdiff(clades, present_specials))
+    }
+    updateSelectInput(session, "lol_ref_group", choices = clades, selected = clades[1])
+    updateSelectInput(session, "lol_tar_group", choices = clades, selected = if(length(clades)>1) clades[2] else if(length(clades)>0) clades[1] else NULL)
   })
   
   # --- HELPER: Dynamically Update Position Limit based on Gene Length (Tab 1) ---
@@ -1008,19 +1089,19 @@ server <- function(input, output, session) {
   # SERVER: TAB 3 - ENTROPY LANDSCAPE
   # ==========================================
   output$ent_plot_title <- renderText({ 
-    clade_text <- if(input$ent_clade == "All") "All Clades" else paste("Clade", input$ent_clade)
+    clade_text <- if(input$ent_group == "All") paste("All", input$ent_group_by) else paste(input$ent_group_by, input$ent_group)
     mode_text <- if(input$variation_type == "AA") "Amino Acid" else "Nucleotide"
     paste(mode_text, "Shannon Entropy Landscape - Subtype", input$global_subtype, "| Gene", input$ent_gene, "|", clade_text) 
   })
   
   output$ent_plot <- renderPlotly({
-    req(input$global_subtype, input$ent_gene, input$ent_clade)
+    req(input$global_subtype, input$ent_gene, input$ent_group)
     
-    tmp <- current_usage_by_clade() %>% 
+    tmp <- ent_usage_data() %>% 
       filter(Group == input$global_subtype, Gene == input$ent_gene)
     
-    if (input$ent_clade != "All") {
-      tmp <- tmp %>% filter(Clade == input$ent_clade)
+    if (input$ent_group != "All") {
+      tmp <- tmp %>% filter(Clade == input$ent_group)
     }
     
     ent_data <- tmp %>%
@@ -1099,16 +1180,16 @@ server <- function(input, output, session) {
   # ==========================================
   output$lol_plot_title <- renderText({ 
     mode_text <- if(input$variation_type == "AA") "Amino Acid" else "Nucleotide"
-    paste(mode_text, "Mutations in", input$lol_tar_clade, "vs Reference", input$lol_ref_clade, "(Gene", input$lol_gene, ")") 
+    paste(mode_text, "Mutations in", input$lol_tar_group, "vs Reference", input$lol_ref_group, "(Gene", input$lol_gene, ")") 
   })
   
   lol_plot_object <- reactive({
-    req(input$global_subtype, input$lol_gene, input$lol_ref_clade, input$lol_tar_clade)
-    validate(need(input$lol_ref_clade != input$lol_tar_clade, "Reference and Target clades are identical. Please select different clades."))
+    req(input$global_subtype, input$lol_gene, input$lol_ref_group, input$lol_tar_group)
+    validate(need(input$lol_ref_group != input$lol_tar_group, paste("Reference and Target groups are identical. Please select different", input$lol_group_by, "groups.")))
     
     # 1. Fetch Reference Clade Data (c1)
-    c1 <- current_usage_by_clade() %>% 
-      filter(Group == input$global_subtype, Clade == input$lol_ref_clade, Gene == input$lol_gene) %>% 
+    c1 <- lol_usage_data() %>% 
+      filter(Group == input$global_subtype, Clade == input$lol_ref_group, Gene == input$lol_gene) %>% 
       # Step A: Exclude "X" and "-"
       filter(!(AminoAcid %in% c("X", "-"))) %>%
       # Step B: Recalculate frequencies based on valid amino acids
@@ -1124,8 +1205,8 @@ server <- function(input, output, session) {
       dplyr::select(Position, Ref_AA = AminoAcid)
     
     # 2. Fetch Target Clade Data (c2)
-    c2 <- current_usage_by_clade() %>% 
-      filter(Group == input$global_subtype, Clade == input$lol_tar_clade, Gene == input$lol_gene) %>% 
+    c2 <- lol_usage_data() %>% 
+      filter(Group == input$global_subtype, Clade == input$lol_tar_group, Gene == input$lol_gene) %>% 
       # Step A: Exclude "X" and "-"
       filter(!(AminoAcid %in% c("X", "-"))) %>%
       # Step B: Recalculate frequencies based on valid amino acids
@@ -1149,7 +1230,7 @@ server <- function(input, output, session) {
         HoverText = paste("Position:", Position, "<br>Mutation:", Label)
       )
     
-    validate(need(nrow(muts) > 0, "No fixed mutations found between these clades."))
+    validate(need(nrow(muts) > 0, "No fixed mutations found between these groups."))
     
     # FIX: Added 'text' to all geoms so Plotly tooltips don't crash when scanning layers
     ggplot(muts, aes(x = Position, y = Y_Level)) +
@@ -1168,7 +1249,7 @@ server <- function(input, output, session) {
   })
   
   output$downloadLolPlot <- downloadHandler(
-    filename = function() { paste0("Lollipop_", input$lol_ref_clade, "_vs_", input$lol_tar_clade, "_", input$lol_gene, ".", tolower(input$lol_plot_format)) },
+    filename = function() { paste0("Lollipop_", input$lol_ref_group, "_vs_", input$lol_tar_group, "_", input$lol_gene, ".", tolower(input$lol_plot_format)) },
     content = function(file) { ggsave(file, plot = lol_plot_object(), device = tolower(input$lol_plot_format), width = 12, height = 6, dpi = 300) }
   )
   
@@ -1182,7 +1263,7 @@ server <- function(input, output, session) {
   
   output$msa_dynamic_container <- renderUI({
     req(input$global_subtype)
-    clade_count <- current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Clade) %>% unique() %>% length()
+    clade_count <- heat_usage_data() %>% filter(Group == input$global_subtype) %>% pull(Clade) %>% unique() %>% length()
     
     if (!is.null(input$show_mut_only) && input$show_mut_only) {
       clade_count <- clade_count + 1
@@ -1200,10 +1281,11 @@ server <- function(input, output, session) {
     
     safe_subtype <- gsub("[^A-Za-z0-9_]", "_", input$global_subtype)
     safe_gene <- gsub("[^A-Za-z0-9_]", "_", input$heat_gene)
+    safe_group <- gsub("[^A-Za-z0-9_]", "_", input$heat_group_by)
     
     prefix <- if(input$variation_type == "AA") "MSA_AA_" else "MSA_NT_"
     # Filename no longer includes minFreq as it is removed
-    aln_filename <- file.path(cache_dir, paste0(prefix, safe_subtype, "_", safe_gene, ".fasta"))
+    aln_filename <- file.path(cache_dir, paste0(prefix, safe_subtype, "_", safe_gene, "_", safe_group, ".fasta"))
     
     if (file.exists(aln_filename)) {
       if(input$variation_type == "AA") {
@@ -1215,11 +1297,11 @@ server <- function(input, output, session) {
       
     } else {
       # 1. Prepare Base Grid of All Positions and Clades to ensure NO GAPS
-      all_pos_in_gene <- current_usage_by_clade() %>% 
+      all_pos_in_gene <- heat_usage_data() %>% 
         filter(Group == input$global_subtype, Gene == input$heat_gene) %>% 
         pull(Position) %>% unique() %>% sort()
       
-      all_clades_in_group <- current_usage_by_clade() %>% 
+      all_clades_in_group <- heat_usage_data() %>% 
         filter(Group == input$global_subtype, Gene == input$heat_gene) %>% 
         pull(Clade) %>% unique() %>% sort()
       
@@ -1228,7 +1310,7 @@ server <- function(input, output, session) {
       # 2. Filter and Identify Majority Character per Position/Clade
       exclude_chars <- if(input$variation_type == "AA") c("X", "-") else c("N", "n", "-")
       
-      raw_data <- current_usage_by_clade() %>% 
+      raw_data <- heat_usage_data() %>% 
         filter(Group == input$global_subtype, Gene == input$heat_gene) %>%
         # Filter out ambiguous/gaps for calculation
         filter(!(AminoAcid %in% exclude_chars)) %>% 
