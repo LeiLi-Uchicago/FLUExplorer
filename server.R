@@ -239,7 +239,7 @@ server <- function(input, output, session) {
             text = ~paste0("Year: ", Year, "<br>Subtype: ", Group, "<br>Sequences: ", scales::comma(Count)),
             marker = list(line = list(color = 'white', width = 0.5))) %>%
       layout(barmode = 'stack',
-             xaxis = list(title = "Year", tickangle = -45, tickfont = list(family = "Arial", size = 12)),
+             xaxis = list(title = "Year", tickangle = -45, tickfont = list(family = "Arial", size = 12), tickformat = "d"),
              yaxis = list(title = "Sequence Count", tickformat = ","),
              legend = list(orientation = 'h', x = 0.5, xanchor = 'center', y = -0.2),
              margin = list(b = 50)) %>%
@@ -293,7 +293,7 @@ server <- function(input, output, session) {
             text = ~paste0("Year: ", Year, "<br>", input$clade_plot_fill, ": ", fill_val, "<br>Count: ", scales::comma(Count)),
             marker = list(line = list(color = 'white', width = 0.5))) %>%
       layout(barmode = 'stack',
-             xaxis = list(title = "Year", tickangle = -45, tickfont = list(family = "Arial", size = 12)),
+             xaxis = list(title = "Year", tickangle = -45, tickfont = list(family = "Arial", size = 12), tickformat = "d"),
              yaxis = list(title = "Sequence Count", tickformat = ","),
              legend = list(title = list(text = ""))) %>%
       config(displayModeBar = FALSE)

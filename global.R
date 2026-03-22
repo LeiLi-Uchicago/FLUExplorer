@@ -23,8 +23,8 @@ options(scipen = 999)
 # ==========================================
 # 1. GLOBAL DATA LOADING & SETUP
 # ==========================================
-# Version 9: Lazy-Loading Architecture
-RDS_CACHE <- "data/app_cache_flu_v8.rds"
+# Version 10: Optimize Metadata Size & Types
+RDS_CACHE <- "data/app_cache_flu_v9.rds"
 
 # Subtypes to load: Dynamically detect valid subtype folders in data/
 possible_dirs <- list.dirs("data", full.names = FALSE, recursive = FALSE)
@@ -99,9 +99,20 @@ if (!cache_loaded) {
   }
   metadata_global <- bind_rows(all_metadata)
   
-  # Identify dynamic grouping columns by excluding core fields
-  core_cols <- c("Isolate_Id", "Group", "date", "Location", "region", "country", "Year", "YM")
-  metadata_grouping_cols <- setdiff(colnames(metadata_global), core_cols)
+  # Identify dynamic grouping columns by matching with actual usage file groupings
+  usage_groups <- c()
+  for (subtype in SUBTYPES) {
+    aa_dir <- paste0("data/", subtype, "/AA/")
+    if (dir.exists(aa_dir)) {
+      files <- list.files(aa_dir, pattern = "^aa_usage_by_.*\\.csv")
+      usage_groups <- unique(c(usage_groups, sub("^aa_usage_by_(.*)\\.csv$", "\\1", files)))
+    }
+  }
+  mapped_usage_groups <- usage_groups
+  mapped_usage_groups[mapped_usage_groups == "HA_clade"] <- "clade"
+  mapped_usage_groups[mapped_usage_groups == "NA_clade"] <- "G_clade"
+  
+  metadata_grouping_cols <- intersect(colnames(metadata_global), setdiff(mapped_usage_groups, c("Year", "Year_Month")))
   
   # Clean up empty clade names
   for(col in metadata_grouping_cols) {
@@ -111,7 +122,7 @@ if (!cache_loaded) {
   }
 
   # Robust Date Handling
-  metadata_global$Year <- stringr::str_extract(metadata_global$date, "^\\d{4}")
+  metadata_global$Year <- as.numeric(stringr::str_extract(metadata_global$date, "^\\d{4}"))
   metadata_global$YM <- stringr::str_extract(metadata_global$date, "^\\d{4}-\\d{2}")
   
   total_raw    <- scales::comma(nrow(metadata_global))
