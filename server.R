@@ -124,6 +124,18 @@ server <- function(input, output, session) {
     }
   }, ignoreInit = TRUE)
 
+  observeEvent(input$sp_hide_empty_years, {
+    if (!is.null(input$sp_hide_empty_years) && !is.null(input$pw_hide_empty_years) && input$sp_hide_empty_years != input$pw_hide_empty_years) {
+      updateCheckboxInput(session, "pw_hide_empty_years", value = input$sp_hide_empty_years)
+    }
+  }, ignoreInit = TRUE)
+  
+  observeEvent(input$pw_hide_empty_years, {
+    if (!is.null(input$pw_hide_empty_years) && !is.null(input$sp_hide_empty_years) && input$pw_hide_empty_years != input$sp_hide_empty_years) {
+      updateCheckboxInput(session, "sp_hide_empty_years", value = input$pw_hide_empty_years)
+    }
+  }, ignoreInit = TRUE)
+
   pairwise_usage_data <- reactive({
     req(input$global_subtype, input$variation_type, input$pw_group_by)
     var_lower <- tolower(input$variation_type)
@@ -793,6 +805,10 @@ server <- function(input, output, session) {
       mutate(`Frequency(%)` = (Count / Total_in_Clade) * 100) %>%
       ungroup()
       
+    if (input$pw_group_by == "Year" && isTRUE(input$pw_hide_empty_years)) {
+      res <- res %>% filter(Total_in_Clade > 0)
+    }
+      
     group_col <- input$pw_group_by
     
     # Pre-calculate a clean tooltip text to avoid complex logic inside aes()
@@ -841,12 +857,65 @@ server <- function(input, output, session) {
     )
     names(html_labels) <- plot_clades 
     
+    group_col <- input$pw_group_by
+    special_values <- c("Unknown", "unassigned", "Unassigned")
+    
+    # Enforce correct data type to hide/show gaps dynamically
+    if (group_col == "Year") {
+      present_specials <- intersect(special_values, as.character(data$Clade))
+      has_specials <- length(present_specials) > 0
+      
+      if (isTRUE(input$pw_hide_empty_years) || has_specials) {
+        all_years <- sort(unique(as.character(data$Clade)))
+        if (has_specials) all_years <- c(present_specials, setdiff(all_years, present_specials))
+        data$Clade <- factor(data$Clade, levels = all_years)
+        x_scale <- scale_x_discrete(labels = html_labels)
+      } else {
+        data$Clade <- as.numeric(as.character(data$Clade))
+        safe_sel_clades <- suppressWarnings(as.numeric(selected_clades))
+        x_scale <- scale_x_continuous(
+          breaks = function(x) {
+            bks <- unique(floor(pretty(seq(min(x, na.rm=TRUE), max(x, na.rm=TRUE)))))
+            sort(unique(c(bks, safe_sel_clades[!is.na(safe_sel_clades)])))
+          },
+          labels = function(b) {
+            ifelse(b %in% safe_sel_clades, paste0("<b style='color:red;'>", b, "</b>"), as.character(b))
+          }
+        )
+      }
+    } else if (group_col == "Year_Month") {
+      all_yms <- sort(unique(as.character(data$Clade)))
+      present_specials <- intersect(special_values, all_yms)
+      has_specials <- length(present_specials) > 0
+      if (has_specials) all_yms <- c(present_specials, setdiff(all_yms, present_specials))
+      data$Clade <- factor(data$Clade, levels = all_yms)
+      if (has_specials) {
+        chronological_yms <- setdiff(all_yms, special_values)
+        sampled_yms <- chronological_yms[seq(1, length(chronological_yms), by = 6)]
+        bks <- unique(c(present_specials, sampled_yms, selected_clades[selected_clades %in% all_yms]))
+        # Retain original chronological ordering for the breaks
+        bks <- all_yms[all_yms %in% bks] 
+        x_scale <- scale_x_discrete(breaks = bks, labels = unname(html_labels[bks]))
+      } else {
+        bks <- all_yms[seq(1, length(all_yms), by = 6)]
+        bks <- unique(c(bks, selected_clades[selected_clades %in% all_yms]))
+        bks <- all_yms[all_yms %in% bks] 
+        x_scale <- scale_x_discrete(breaks = bks, labels = unname(html_labels[bks]))
+      }
+    } else {
+      all_vals <- sort(unique(as.character(data$Clade)))
+      present_specials <- intersect(special_values, all_vals)
+      if (length(present_specials) > 0) all_vals <- c(present_specials, setdiff(all_vals, present_specials))
+      data$Clade <- factor(data$Clade, levels = all_vals)
+      x_scale <- scale_x_discrete(labels = html_labels)
+    }
+    
     ggplot(data, aes(x = Clade, y = !!sym("Frequency(%)"), fill = AminoAcid, group = AminoAcid, 
                      text = tooltip_text)) + 
       geom_col(color = "black", size = 0.2) + 
       scale_fill_manual(values = current_colors(), drop = FALSE) + 
       scale_y_continuous(expand = c(0,0), limits = c(0, 105)) + 
-      scale_x_discrete(labels = html_labels) + 
+      x_scale + 
       labs(x = input$pw_group_by, y = "Frequency (%)", fill = variant_label()) + 
       theme_minimal(base_size = input$modal_font_size) + 
       theme(

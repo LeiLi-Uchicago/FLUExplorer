@@ -328,6 +328,7 @@ ui <- navbarPage(
            sidebarLayout(
              sidebarPanel(
                selectInput("pw_group_by", "Group by:", choices = NULL),
+               checkboxInput("pw_hide_empty_years", "Hide years without records (when Group by Year)", value = TRUE),
                selectInput("pw_clade1", "Group 1:", choices = NULL),
                selectInput("pw_clade2", "Group 2:", choices = NULL),
                numericInput("pw_min_freq", "Minimum Dominant Frequency (%):", value = 90.0, min = 50.0, max = 100.0, step = 1.0),
