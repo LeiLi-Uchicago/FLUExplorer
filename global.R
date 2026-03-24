@@ -23,8 +23,8 @@ options(scipen = 999)
 # ==========================================
 # 1. GLOBAL DATA LOADING & SETUP
 # ==========================================
-# Version 10: Optimize Metadata Size & Types
-RDS_CACHE <- "data/app_cache_flu_v9.rds"
+# Version 11: Read important_positions.csv
+RDS_CACHE <- "data/app_cache_flu.rds"
 
 # Subtypes to load: Dynamically detect valid subtype folders in data/
 possible_dirs <- list.dirs("data", full.names = FALSE, recursive = FALSE)
@@ -163,18 +163,27 @@ if (!cache_loaded) {
     }
   }
 
-  # --- Important positions (Placeholder for Flu) ---
-  important_pos_df <- data.frame(
-    Gene = character(),
-    Subtype = character(),
-    Position = numeric(),
-    Mutation = character(),
-    Epitope = character(),
-    Clinical_impact = character(),
-    Source = character(),
-    label = character(),
-    stringsAsFactors = FALSE
-  )
+  # --- Important positions ---
+  important_pos_file <- "data/important_positions.csv"
+  if (file.exists(important_pos_file)) {
+    message("Loading important positions from CSV...")
+    important_pos_df <- read_csv(important_pos_file, show_col_types = FALSE)
+    if (!"label" %in% names(important_pos_df)) {
+      important_pos_df$label <- paste(important_pos_df$Subtype, important_pos_df$Gene, important_pos_df$Position, sep = " - ")
+    }
+  } else {
+    important_pos_df <- data.frame(
+      Gene = character(),
+      Subtype = character(),
+      Position = numeric(),
+      Mutation = character(),
+      Epitope = character(),
+      Clinical_impact = character(),
+      Source = character(),
+      label = character(),
+      stringsAsFactors = FALSE
+    )
+  }
   
   # --- Save RDS cache ---
   message("Writing RDS cache to: ", RDS_CACHE)
