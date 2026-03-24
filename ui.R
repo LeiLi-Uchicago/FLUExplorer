@@ -283,44 +283,56 @@ ui <- navbarPage(
   # TAB 1: SINGLE POSITION
   # ---------------------------------------------------------
   tabPanel("Single Position Explorer",
-           sidebarLayout(
-             sidebarPanel(
-               h5("Setting", style="font-weight: bold; color: #2980b9;"),
-               selectInput("sp_group_by", "Group by:", choices = NULL),
-               checkboxInput("sp_hide_empty_years", "Hide years without records (when Group by Year)", value = TRUE), #
-               checkboxInput("sp_show_counts", "Show raw counts instead of percentage", value = FALSE),
-               hr(),
-               div(id = "sp_quick_access_section",
-                 h5("Quick Access", style="font-weight: bold; color: #2980b9;"),
-                 selectInput("sp_quick_visit", "Jump to Key Position:", 
-                             choices = if(nrow(important_pos_df) > 0) c("Manual Selection" = "None", setNames(1:nrow(important_pos_df), important_pos_df$label)) else c("Manual Selection" = "None")),
-                 hr()
-               ),
-               h5("Precise Access", style="font-weight: bold; color: #2980b9;"),
-               selectInput("sp_gene", "Gene:", choices = NULL),
-               
-               uiOutput("sp_range_label"),
-               div(style = "display: flex; align-items: center; gap: 5px; margin-bottom: 15px;",
-                   actionButton("sp_pos_minus", "-", class = "btn-primary", style = "padding: 6px 12px; font-weight: bold; height: 34px;"),
-                   div(style = "width: 80px;margin-top: 15px", 
-                       tags$style(HTML("#sp_position { margin-bottom: 0px !important; height: 34px; text-align: center; }")),
-                       numericInput("sp_position", label = NULL, value = 1, min = 1, max = 1000)
-                   ),
-                   actionButton("sp_pos_plus", "+", class = "btn-primary", style = "padding: 6px 12px; font-weight: bold; height: 34px;"),
-                   uiOutput("sp_numbering_label")
-               ),
-               sliderInput("sp_min_seqs", "Min Seqs:", min = 1, max = 500, value = 5),
-               sliderInput("sp_font_size", "Plot Font Size:", min = 10, max = 24, value = 14),
-               hr(),
-               radioButtons("sp_plot_format", "Download Format:", choices = c("PDF", "PNG"), inline = TRUE),
-               downloadButton("downloadSpPlot", "Download Plot", class = "btn-info", style="width: 100%;")
+           fluidPage(
+             wellPanel(
+               fluidRow(
+                 column(3,
+                        h5("Setting", style="font-weight: bold; color: #2980b9;"),
+                        selectInput("sp_group_by", "Group by:", choices = NULL),
+                        checkboxInput("sp_hide_empty_years", "Hide years without records (when Group by Year)", value = TRUE),
+                        checkboxInput("sp_show_counts", "Show raw counts instead of percentage", value = FALSE)
+                 ),
+                 column(3,
+                        div(id = "sp_quick_access_section",
+                            h5("Quick Access", style="font-weight: bold; color: #2980b9;"),
+                            selectInput("sp_quick_visit", "Jump to Key Position:", 
+                                        choices = if(nrow(important_pos_df) > 0) c("Manual Selection" = "None", setNames(1:nrow(important_pos_df), important_pos_df$label)) else c("Manual Selection" = "None"))
+                        ),
+                        sliderInput("sp_min_seqs", "Min Seqs:", min = 1, max = 500, value = 5)
+                 ),
+                 column(4,
+                        h5("Precise Access", style="font-weight: bold; color: #2980b9;"),
+                        fluidRow(
+                          column(4, selectInput("sp_gene", "Gene:", choices = NULL)),
+                          column(8,
+                                 uiOutput("sp_range_label"),
+                                 div(style = "display: flex; align-items: center; gap: 5px; margin-bottom: 15px;",
+                                     actionButton("sp_pos_minus", "-", class = "btn-primary", style = "padding: 6px 12px; font-weight: bold; height: 34px;"),
+                                     div(style = "width: 80px;", 
+                                         tags$style(HTML("#sp_position { margin-bottom: 0px !important; height: 34px; text-align: center; }")),
+                                         numericInput("sp_position", label = NULL, value = 1, min = 1, max = 1000)
+                                     ),
+                                     actionButton("sp_pos_plus", "+", class = "btn-primary", style = "padding: 6px 12px; font-weight: bold; height: 34px;"),
+                                     uiOutput("sp_numbering_label")
+                                 )
+                          )
+                        )
+                 ),
+                 column(2,
+                        h5("Export", style="font-weight: bold; color: #2980b9;"),
+                        sliderInput("sp_font_size", "Plot Font Size:", min = 10, max = 24, value = 14),
+                        radioButtons("sp_plot_format", "Download Format:", choices = c("PDF", "PNG"), inline = TRUE),
+                        downloadButton("downloadSpPlot", "Download Plot", class = "btn-info", style="width: 100%;")
+                 )
+               )
              ),
-             mainPanel(
-               uiOutput("sp_position_details"),
-               withWaiter(plotlyOutput("sp_aa_plot", height = "500px")),
-               DTOutput("sp_aa_table")
+             fluidRow(
+               column(12,
+                      uiOutput("sp_position_details"),
+                      withWaiter(plotlyOutput("sp_aa_plot", height = "500px")),
+                      DTOutput("sp_aa_table")
+               )
              )
-
            )
   ),
   
@@ -328,21 +340,33 @@ ui <- navbarPage(
   # TAB 2: PAIRWISE COMPARISON
   # ---------------------------------------------------------
   tabPanel("Pairwise Comparison",
-           sidebarLayout(
-             sidebarPanel(
-               selectInput("pw_group_by", "Group by:", choices = NULL),
-               checkboxInput("pw_hide_empty_years", "Hide years without records (when Group by Year)", value = TRUE),
-               selectInput("pw_clade1", "Group 1:", choices = NULL),
-               selectInput("pw_clade2", "Group 2:", choices = NULL),
-               numericInput("pw_min_freq", "Minimum Dominant Frequency (%):", value = 90.0, min = 50.0, max = 100.0, step = 1.0),
-               hr(),
-               downloadButton("downloadPairwiseCSV", "Download Table (CSV)", class = "btn-primary", style="margin-bottom: 5px; width: 100%;"),
-               downloadButton("downloadPairwiseExcel", "Download Excel Matrices", class = "btn-success", style="width: 100%;")
+           fluidPage(
+             wellPanel(
+               fluidRow(
+                 column(3,
+                        selectInput("pw_group_by", "Group by:", choices = NULL),
+                        checkboxInput("pw_hide_empty_years", "Hide years without records", value = TRUE)
+                 ),
+                 column(3,
+                        selectInput("pw_clade1", "Group 1:", choices = NULL),
+                        selectInput("pw_clade2", "Group 2:", choices = NULL)
+                 ),
+                 column(3,
+                        numericInput("pw_min_freq", "Min Dominant Freq (%):", value = 90.0, min = 50.0, max = 100.0, step = 1.0)
+                 ),
+                 column(3,
+                        br(),
+                        downloadButton("downloadPairwiseCSV", "Download Table (CSV)", class = "btn-primary", style="margin-bottom: 5px; width: 100%;"),
+                        downloadButton("downloadPairwiseExcel", "Download Excel Matrices", class = "btn-success", style="width: 100%;")
+                 )
+               )
              ),
-             mainPanel(
-               h3("Cross-Gene Pairwise Differences"),
-               p("Click on any highlighted Position to view the full amino acid distribution for that specific site."),
-               DTOutput("pw_diff_table")
+             fluidRow(
+               column(12,
+                      h3("Cross-Gene Pairwise Differences"),
+                      p("Click on any highlighted Position to view the full amino acid distribution for that specific site."),
+                      DTOutput("pw_diff_table")
+               )
              )
            )
   )
