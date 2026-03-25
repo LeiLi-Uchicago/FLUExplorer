@@ -11,17 +11,24 @@ server <- function(input, output, session) {
   variant_label <- reactive({
     if(input$variation_type == "AA") "AA" else "NT"
   })
+
+  available_genes <- reactive({
+    req(input$global_subtype, input$variation_type)
+    genes <- list.dirs(paste0("data/", input$global_subtype, "/", input$variation_type, "/"), full.names = FALSE, recursive = FALSE)
+    sort(genes)
+  })
   
   current_usage_by_clade <- reactive({
-    req(input$global_subtype, input$variation_type)
+    req(input$global_subtype, input$variation_type, input$sp_gene)
     var_lower <- tolower(input$variation_type)
     
-    dir_path <- paste0("data/", input$global_subtype, "/", input$variation_type, "/")
+    dir_path <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$sp_gene, "/")
     rds_file <- paste0(dir_path, var_lower, "_usage_by_HA_clade.rds")
     
-    # Fallback to the first available group file if HA_clade is not available for this subtype
+    # Fallback to the first available group file if HA_clade is not available
     if (!file.exists(rds_file)) {
       files <- list.files(dir_path, pattern = paste0("^", var_lower, "_usage_by_.*\\.rds$"))
+      # Exclude Year/Month files for the 'by_clade' fallback
       files <- setdiff(files, c(paste0(var_lower, "_usage_by_Year.rds"), paste0(var_lower, "_usage_by_Year_Month.rds")))
       if (length(files) > 0) {
         rds_file <- paste0(dir_path, files[1])
@@ -30,12 +37,21 @@ server <- function(input, output, session) {
     
     df <- get_lazy_table(rds_file)
     if (!is.null(df)) {
-      if ("HA_clade" %in% colnames(df)) {
-        df <- df %>% dplyr::rename(Clade = HA_clade)
+      # Try to find a suitable column to rename to Clade
+      possible_cols <- c("HA_clade", "NA_clade", "clade", "G_clade")
+      found_col <- intersect(possible_cols, colnames(df))
+      
+      if (length(found_col) > 0) {
+        df <- df %>% dplyr::rename(Clade = !!sym(found_col[1]))
       } else {
+        # If no clade column found, and it's not a Year/Month table, 
+        # try to rename the first column that matches the filename grouping
         group_col <- sub(paste0("^", var_lower, "_usage_by_(.*)\\.rds$"), "\\1", basename(rds_file))
         if (group_col %in% colnames(df)) {
           df <- df %>% dplyr::rename(Clade = !!sym(group_col))
+        } else if (!"Clade" %in% colnames(df)) {
+          # Last resort: if Clade still missing, create it as 'Unknown'
+          df$Clade <- "Unknown"
         }
       }
       return(df)
@@ -45,49 +61,44 @@ server <- function(input, output, session) {
 
   # --- HELPER: Update Grouping Choices based on Loaded Data ---
   observe({
-    req(input$global_subtype, input$variation_type)
-    dir_path <- paste0("data/", input$global_subtype, "/", input$variation_type, "/")
+    req(input$global_subtype, input$variation_type, input$sp_gene)
+    dir_path <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$sp_gene, "/")
     files <- list.files(dir_path, pattern = paste0("^", tolower(input$variation_type), "_usage_by_.*\\.rds$"))
     available_groups <- sub(paste0("^", tolower(input$variation_type), "_usage_by_(.*)\\.rds$"), "\\1", files)
     
     if (length(available_groups) == 0) return()
 
-    # Create a mapping for display names
-    # Key = Internal Key (Year), Value = Display Label (Year)
     group_map <- setNames(available_groups, available_groups)
     
-    # Custom labels for better readability
     if ("Year_Month" %in% names(group_map)) names(group_map)[group_map == "Year_Month"] <- "Year-Month"
-    # Convert underscores to spaces and capitalize for others (e.g., HA_clade -> HA Clade)
     other_indices <- which(!(group_map %in% c("Year", "Year_Month")))
     for (i in other_indices) {
       names(group_map)[i] <- gsub("_", " ", group_map[i])
     }
     
-    # Desired priority order: 1. Year, 2. Year_Month, then others
     priority_keys <- intersect(c("Year", "Year_Month"), available_groups)
     other_keys <- sort(setdiff(available_groups, priority_keys))
-    
     final_ordered_keys <- c(priority_keys, other_keys)
     
-    # Create the named list for choices: list("Display" = "internal_key")
     final_choices <- setNames(final_ordered_keys, names(group_map)[match(final_ordered_keys, group_map)])
     
-    # Determine selection: keep current if still valid, else default to Year
     current_sel <- if (input$sp_group_by %in% available_groups) input$sp_group_by else "Year"
-    
     updateSelectInput(session, "sp_group_by", choices = final_choices, selected = current_sel)
   })
   
   # --- HELPER: Update Gene Dropdowns based on Subtype ---
-  observeEvent(list(input$global_subtype, input$variation_type), { updateSelectInput(session, "sp_gene", choices = current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Gene) %>% unique() %>% sort()) })
-  observeEvent(list(input$global_subtype, input$variation_type), { updateSelectInput(session, "ent_gene", choices = current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Gene) %>% unique() %>% sort()) })
-  observeEvent(list(input$global_subtype, input$variation_type), { updateSelectInput(session, "lol_gene", choices = current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Gene) %>% unique() %>% sort()) })
-  observeEvent(list(input$global_subtype, input$variation_type), { updateSelectInput(session, "heat_gene", choices = current_usage_by_clade() %>% filter(Group == input$global_subtype) %>% pull(Gene) %>% unique() %>% sort()) })
+  observeEvent(available_genes(), {
+    genes <- available_genes()
+    updateSelectInput(session, "sp_gene", choices = genes)
+    updateSelectInput(session, "ent_gene", choices = genes)
+    updateSelectInput(session, "lol_gene", choices = genes)
+    updateSelectInput(session, "heat_gene", choices = genes)
+  })
   
   # --- HELPER: Update Pairwise & Landscape Grouping Choices ---
-  observeEvent(list(input$global_subtype, input$variation_type), {
-    dir_path <- paste0("data/", input$global_subtype, "/", input$variation_type, "/")
+  observeEvent(list(input$global_subtype, input$variation_type, input$sp_gene), {
+    req(input$sp_gene)
+    dir_path <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$sp_gene, "/")
     files <- list.files(dir_path, pattern = paste0("^", tolower(input$variation_type), "_usage_by_.*\\.rds$"))
     available_groups <- sub(paste0("^", tolower(input$variation_type), "_usage_by_(.*)\\.rds$"), "\\1", files)
     
@@ -169,12 +180,19 @@ server <- function(input, output, session) {
   pairwise_usage_data <- reactive({
     req(input$global_subtype, input$variation_type, input$pw_group_by)
     var_lower <- tolower(input$variation_type)
-    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", var_lower, "_usage_by_", input$pw_group_by, ".rds")
     
-    df <- get_lazy_table(rds_file)
-    if (!is.null(df)) {
+    genes <- available_genes()
+    all_dfs <- lapply(genes, function(g) {
+      rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", g, "/", var_lower, "_usage_by_", input$pw_group_by, ".rds")
+      get_lazy_table(rds_file)
+    })
+    
+    df <- bind_rows(all_dfs)
+    if (nrow(df) > 0) {
       if (input$pw_group_by %in% colnames(df)) {
         df <- df %>% dplyr::rename(Clade = !!sym(input$pw_group_by))
+      } else if (!"Clade" %in% colnames(df)) {
+        df$Clade <- "Unknown"
       }
       return(df)
     }
@@ -182,14 +200,16 @@ server <- function(input, output, session) {
   })
 
   ent_usage_data <- reactive({
-    req(input$global_subtype, input$variation_type, input$ent_group_by)
+    req(input$global_subtype, input$variation_type, input$ent_group_by, input$ent_gene)
     var_lower <- tolower(input$variation_type)
-    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", var_lower, "_usage_by_", input$ent_group_by, ".rds")
+    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$ent_gene, "/", var_lower, "_usage_by_", input$ent_group_by, ".rds")
     
     df <- get_lazy_table(rds_file)
     if (!is.null(df)) {
       if (input$ent_group_by %in% colnames(df)) {
         df <- df %>% dplyr::rename(Clade = !!sym(input$ent_group_by))
+      } else if (!"Clade" %in% colnames(df)) {
+        df$Clade <- "Unknown"
       }
       return(df)
     }
@@ -197,14 +217,16 @@ server <- function(input, output, session) {
   })
 
   lol_usage_data <- reactive({
-    req(input$global_subtype, input$variation_type, input$lol_group_by)
+    req(input$global_subtype, input$variation_type, input$lol_group_by, input$lol_gene)
     var_lower <- tolower(input$variation_type)
-    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", var_lower, "_usage_by_", input$lol_group_by, ".rds")
+    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$lol_gene, "/", var_lower, "_usage_by_", input$lol_group_by, ".rds")
     
     df <- get_lazy_table(rds_file)
     if (!is.null(df)) {
       if (input$lol_group_by %in% colnames(df)) {
         df <- df %>% dplyr::rename(Clade = !!sym(input$lol_group_by))
+      } else if (!"Clade" %in% colnames(df)) {
+        df$Clade <- "Unknown"
       }
       return(df)
     }
@@ -212,14 +234,16 @@ server <- function(input, output, session) {
   })
 
   heat_usage_data <- reactive({
-    req(input$global_subtype, input$variation_type, input$heat_group_by)
+    req(input$global_subtype, input$variation_type, input$heat_group_by, input$heat_gene)
     var_lower <- tolower(input$variation_type)
-    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", var_lower, "_usage_by_", input$heat_group_by, ".rds")
+    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$heat_gene, "/", var_lower, "_usage_by_", input$heat_group_by, ".rds")
     
     df <- get_lazy_table(rds_file)
     if (!is.null(df)) {
       if (input$heat_group_by %in% colnames(df)) {
         df <- df %>% dplyr::rename(Clade = !!sym(input$heat_group_by))
+      } else if (!"Clade" %in% colnames(df)) {
+        df$Clade <- "Unknown"
       }
       return(df)
     }
@@ -289,25 +313,34 @@ server <- function(input, output, session) {
   observeEvent(input$clade_plot_subtype, {
     req(input$clade_plot_subtype)
     
-    # Find valid groups for this subtype by scanning the directory
-    dir_path <- paste0("data/", input$clade_plot_subtype, "/AA/")
-    files <- list.files(dir_path, pattern = "^aa_usage_by_.*\\.rds$")
-    all_usage_groups <- sub("^aa_usage_by_(.*)\\.rds$", "\\1", files)
+    # Find valid groups for this subtype by scanning a sample gene directory (HA)
+    sample_gene <- "HA"
+    dir_path <- paste0("data/", input$clade_plot_subtype, "/AA/", sample_gene, "/")
+    if (!dir.exists(dir_path)) {
+       # Fallback to first available gene
+       genes <- list.dirs(paste0("data/", input$clade_plot_subtype, "/AA/"), full.names = FALSE, recursive = FALSE)
+       if (length(genes) > 0) dir_path <- paste0("data/", input$clade_plot_subtype, "/AA/", genes[1], "/")
+    }
     
-    valid_groups <- setdiff(all_usage_groups, c("Year", "Year_Month"))
-    
-    # Map usage group names to their respective metadata columns
-    meta_cols <- valid_groups
-    meta_cols[meta_cols == "HA_clade"] <- "clade"
-    meta_cols[meta_cols == "NA_clade"] <- "G_clade"
-    
-    display_names <- gsub("_", " ", valid_groups)
-    display_names <- gsub("clade", "Clade", display_names, ignore.case = TRUE)
-    
-    choices <- c(setNames(meta_cols, display_names), c("Region" = "region", "Country" = "country"))
-    
-    current_sel <- if (!is.null(input$clade_plot_fill) && input$clade_plot_fill %in% choices) input$clade_plot_fill else choices[1]
-    updateSelectInput(session, "clade_plot_fill", choices = choices, selected = current_sel)
+    if (dir.exists(dir_path)) {
+      files <- list.files(dir_path, pattern = "^aa_usage_by_.*\\.rds$")
+      all_usage_groups <- sub("^aa_usage_by_(.*)\\.rds$", "\\1", files)
+      
+      valid_groups <- setdiff(all_usage_groups, c("Year", "Year_Month"))
+      
+      # Map usage group names to their respective metadata columns
+      meta_cols <- valid_groups
+      meta_cols[meta_cols == "HA_clade"] <- "clade"
+      meta_cols[meta_cols == "NA_clade"] <- "G_clade"
+      
+      display_names <- gsub("_", " ", valid_groups)
+      display_names <- gsub("clade", "Clade", display_names, ignore.case = TRUE)
+      
+      choices <- c(setNames(meta_cols, display_names), c("Region" = "region", "Country" = "country"))
+      
+      current_sel <- if (!is.null(input$clade_plot_fill) && input$clade_plot_fill %in% choices) input$clade_plot_fill else choices[1]
+      updateSelectInput(session, "clade_plot_fill", choices = choices, selected = current_sel)
+    }
   })
 
   # --- REACTIVE MAP DATA ---
@@ -482,24 +515,27 @@ server <- function(input, output, session) {
     req(subtype, gene, pos, group_col, var_type)
     
     var_lower <- tolower(var_type)
-    rds_file <- paste0("data/", subtype, "/", var_type, "/", var_lower, "_usage_by_", group_col, ".rds")
+    rds_file <- paste0("data/", subtype, "/", var_type, "/", gene, "/", var_lower, "_usage_by_", group_col, ".rds")
     data <- get_lazy_table(rds_file)
     
     validate(need(!is.null(data), paste("Table not found for group:", group_col)))
     validate(need(group_col %in% colnames(data), "Updating data..."))
     
+    # Identfy columns to keep during aggregation
+    # We always keep Group, Gene, Position, and the primary grouping column
+    group_cols <- c("Group", "Gene", "Position", group_col)
+    
     # 1. Basic filtering by gene, position, subtype
     filtered <- data %>% 
       filter(Group == subtype, Gene == gene, Position == pos) %>%
       # 2. Filter out "X" and "-"
-      filter(!(AminoAcid %in% c("X", "-")))
-    
-    # 3. Recalculate totals and frequencies based on remaining valid sequences
-    # This ensures your plot bars correctly represent 100% of the available data
-    filtered <- filtered %>%
-      group_by(!!sym(group_col)) %>%
+      filter(!(AminoAcid %in% c("X", "-"))) %>%
+      # NEW Step: Aggregate Counts by the grouping column and AminoAcid
+      group_by(across(all_of(c(group_cols, "AminoAcid")))) %>%
+      summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop_last") %>%
+      # 3. Recalculate totals and frequencies based on remaining valid sequences
       mutate(
-        Valid_Total = sum(Count), # This is the total count of valid AAs/NTs for the group
+        Valid_Total = sum(Count), 
         `Frequency(%)` = (Count / Valid_Total) * 100
       ) %>%
       ungroup()
@@ -656,17 +692,30 @@ server <- function(input, output, session) {
     data <- sp_filtered_data()
     req(input$sp_group_by)
     
-    # Select columns to show, including Codon_Usage if present
-    cols_to_show <- c(input$sp_group_by, "AminoAcid", "Count", "Valid_Total", "Frequency(%)")
-    if("Codon_Usage" %in% colnames(data)) cols_to_show <- c(cols_to_show, "Codon_Usage")
+    # Identify which columns are actually available in the data
+    actual_cols <- colnames(data)
     
-    # Safely intersect to completely prevent "Can't subset elements that don't exist" errors
-    cols_to_show <- intersect(cols_to_show, colnames(data))
-    req(input$sp_group_by %in% colnames(data))
+    # Select columns to show, prioritizing the current grouping column
+    cols_to_show <- c(input$sp_group_by, "AminoAcid", "Count", "Valid_Total", "Frequency(%)")
+    if("Codon_Usage" %in% actual_cols) cols_to_show <- c(cols_to_show, "Codon_Usage")
+    
+    # Final safety check: only use columns that exist in the dataframe
+    final_cols <- intersect(cols_to_show, actual_cols)
+    
+    # Ensure we have at least one column to display
+    validate(need(length(final_cols) > 0, "Processing data table..."))
+    
+    # Sort the table by the grouping column and then by frequency
+    table_data <- data %>% 
+      dplyr::select(all_of(final_cols))
+    
+    if (input$sp_group_by %in% colnames(table_data)) {
+      table_data <- table_data %>% arrange(!!sym(input$sp_group_by), desc(`Frequency(%)`))
+    }
     
     datatable(
-      data %>% dplyr::select(all_of(cols_to_show)) %>% arrange(!!sym(input$sp_group_by), desc(`Frequency(%)`)), 
-      options = list(pageLength = 10, autoWidth = TRUE), 
+      table_data, 
+      options = list(pageLength = 10, autoWidth = TRUE, order = list()), 
       rownames = FALSE
     ) %>% formatRound("Frequency(%)", digits = 2)
   })
@@ -1192,6 +1241,9 @@ server <- function(input, output, session) {
       filter(Group == input$global_subtype, Clade == input$lol_ref_group, Gene == input$lol_gene) %>% 
       # Step A: Exclude "X" and "-"
       filter(!(AminoAcid %in% c("X", "-"))) %>%
+      # NEW Step: Aggregate Counts across sub-groups (Year, Month, etc.) to get clade-wide totals per position
+      group_by(Position, AminoAcid) %>%
+      summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop_last") %>%
       # Step B: Recalculate frequencies based on valid amino acids
       group_by(Position) %>% 
       mutate(
@@ -1209,6 +1261,9 @@ server <- function(input, output, session) {
       filter(Group == input$global_subtype, Clade == input$lol_tar_group, Gene == input$lol_gene) %>% 
       # Step A: Exclude "X" and "-"
       filter(!(AminoAcid %in% c("X", "-"))) %>%
+      # NEW Step: Aggregate Counts across sub-groups
+      group_by(Position, AminoAcid) %>%
+      summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop_last") %>%
       # Step B: Recalculate frequencies based on valid amino acids
       group_by(Position) %>% 
       mutate(

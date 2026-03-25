@@ -102,11 +102,19 @@ if (!cache_loaded) {
   # Identify dynamic grouping columns by matching with actual usage file groupings
   usage_groups <- c()
   for (subtype in SUBTYPES) {
-    aa_dir <- paste0("data/", subtype, "/AA/")
-    if (dir.exists(aa_dir)) {
-      files <- list.files(aa_dir, pattern = "^aa_usage_by_.*\\.csv")
-      usage_groups <- unique(c(usage_groups, sub("^aa_usage_by_(.*)\\.csv$", "\\1", files)))
+    aa_root <- paste0("data/", subtype, "/AA/")
+    if (dir.exists(aa_root)) {
+      # Look into the first gene subdirectory found
+      gene_dirs <- list.dirs(aa_root, full.names = TRUE, recursive = FALSE)
+      if (length(gene_dirs) > 0) {
+        files <- list.files(gene_dirs[1], pattern = "^aa_usage_by_.*\\.csv")
+        usage_groups <- unique(c(usage_groups, sub("^aa_usage_by_(.*)\\.csv$", "\\1", files)))
+      }
     }
+  }
+  # Add Year explicitly since we will generate it from Year_Month
+  if ("Year_Month" %in% usage_groups) {
+    usage_groups <- unique(c(usage_groups, "Year"))
   }
   mapped_usage_groups <- usage_groups
   mapped_usage_groups[mapped_usage_groups == "HA_clade"] <- "clade"
@@ -133,32 +141,63 @@ if (!cache_loaded) {
   for (subtype in SUBTYPES) {
     message("Processing usage tables into RDS for ", subtype)
     
-    # AA tables
-    aa_dir <- paste0("data/", subtype, "/AA/")
-    if (dir.exists(aa_dir)) {
-      aa_files <- list.files(aa_dir, pattern = "aa_usage_by_.*\\.csv", full.names = TRUE)
-      for (f in aa_files) {
-        df <- read_csv(f, show_col_types = FALSE, na = character()) %>%
-          dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
-          mutate(Group = subtype)
+    # Process both AA and NT
+    for (var_type in c("AA", "NT")) {
+      var_root <- paste0("data/", subtype, "/", var_type, "/")
+      if (!dir.exists(var_root)) next
+      
+      gene_dirs <- list.dirs(var_root, full.names = TRUE, recursive = FALSE)
+      for (g_dir in gene_dirs) {
+        gene_name <- basename(g_dir)
+        message("  Processing ", var_type, " / ", gene_name)
+        
+        prefix <- if(var_type == "AA") "aa" else "nt"
+        pattern <- paste0("^", prefix, "_usage_by_.*\\.csv$")
+        files <- list.files(g_dir, pattern = pattern, full.names = TRUE)
+        
+        for (f in files) {
+          # Check if we should process Year_Month specially
+          is_ym <- grepl(paste0(prefix, "_usage_by_Year_Month\\.csv$"), f)
           
-        rds_path <- sub("\\.csv$", ".rds", f)
-        saveRDS(df, rds_path)
-      }
-    }
-    
-    # NT tables
-    nt_dir <- paste0("data/", subtype, "/NT/")
-    if (dir.exists(nt_dir)) {
-      nt_files <- list.files(nt_dir, pattern = "nt_usage_by_.*\\.csv", full.names = TRUE)
-      for (f in nt_files) {
-        df <- read_csv(f, show_col_types = FALSE, na = character()) %>%
-          dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
-          dplyr::rename_with(~ gsub("^Nucleotide$", "AminoAcid", .x), any_of("Nucleotide")) %>%
-          mutate(Group = subtype)
+          df <- read_csv(f, show_col_types = FALSE, na = character()) %>%
+            dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
+            mutate(Group = subtype)
           
-        rds_path <- sub("\\.csv$", ".rds", f)
-        saveRDS(df, rds_path)
+          if (var_type == "NT") {
+            df <- df %>% 
+              dplyr::rename_with(~ gsub("^Nucleotide$", "AminoAcid", .x), any_of("Nucleotide"))
+          }
+          
+          if (is_ym) {
+            # Add Year_Month column for consistency
+            df <- df %>% 
+              mutate(Year_Month = ifelse(Month == "Unknown", as.character(Year), paste0(Year, "-", Month)))
+          }
+          
+          # Save standard RDS
+          rds_path <- sub("\\.csv$", ".rds", f)
+          saveRDS(df, rds_path)
+          
+          # Generate Year version from Year_Month
+          if (is_ym) {
+            message("    Generating Year table from Year_Month for ", gene_name)
+            year_df <- df %>%
+              group_by(Group, Gene, Position, Year, AminoAcid) %>%
+              summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop")
+            
+            # Add Codon_Usage if it exists (might not be simple to aggregate if it's a string)
+            # For now, if it's NT, it doesn't have it. If it's AA, it might.
+            # Usually it's better to just leave it out of the Year table or pick first.
+            if ("Codon_Usage" %in% names(df)) {
+               # We can't easily aggregate strings of codons, maybe just drop it or pick first
+               # but it's position-specific, so if codons changed within a year, it's messy.
+               # Let's just drop it for the Year table for now.
+            }
+            
+            year_rds_path <- file.path(g_dir, paste0(prefix, "_usage_by_Year.rds"))
+            saveRDS(year_df, year_rds_path)
+          }
+        }
       }
     }
   }
