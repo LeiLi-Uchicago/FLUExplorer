@@ -89,10 +89,41 @@ server <- function(input, output, session) {
   # --- HELPER: Update Gene Dropdowns based on Subtype ---
   observeEvent(available_genes(), {
     genes <- available_genes()
-    updateSelectInput(session, "sp_gene", choices = genes)
-    updateSelectInput(session, "ent_gene", choices = genes)
-    updateSelectInput(session, "lol_gene", choices = genes)
-    updateSelectInput(session, "heat_gene", choices = genes)
+    
+    # Smart mapping for gene selection when switching between AA and NT
+    # Function to pick the best matching gene from the new list
+    get_best_gene <- function(current_gene, available_list) {
+      if (is.null(current_gene) || current_gene == "") return(if ("HA" %in% available_list) "HA" else available_list[1])
+      if (current_gene %in% available_list) return(current_gene)
+      
+      # Mapping AA -> NT
+      if (current_gene %in% c("M1", "M2") && "M" %in% available_list) return("M")
+      if (current_gene %in% c("NS1", "NEP") && "NS" %in% available_list) return("NS")
+      
+      # Mapping NT -> AA
+      if (current_gene == "M") {
+        if ("M1" %in% available_list) return("M1")
+        if ("M2" %in% available_list) return("M2")
+      }
+      if (current_gene == "NS") {
+        if ("NS1" %in% available_list) return("NS1")
+        if ("NEP" %in% available_list) return("NEP")
+      }
+      
+      # Default fallback
+      if ("HA" %in% available_list) return("HA")
+      return(available_list[1])
+    }
+    
+    sel_sp   <- get_best_gene(input$sp_gene, genes)
+    sel_ent  <- get_best_gene(input$ent_gene, genes)
+    sel_lol  <- get_best_gene(input$lol_gene, genes)
+    sel_heat <- get_best_gene(input$heat_gene, genes)
+    
+    updateSelectInput(session, "sp_gene", choices = genes, selected = sel_sp)
+    updateSelectInput(session, "ent_gene", choices = genes, selected = sel_ent)
+    updateSelectInput(session, "lol_gene", choices = genes, selected = sel_lol)
+    updateSelectInput(session, "heat_gene", choices = genes, selected = sel_heat)
   })
   
   # --- HELPER: Update Pairwise & Landscape Grouping Choices ---
