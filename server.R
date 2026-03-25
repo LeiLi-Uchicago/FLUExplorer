@@ -258,7 +258,7 @@ server <- function(input, output, session) {
     clades <- pairwise_usage_data() %>% filter(Group == input$global_subtype) %>% pull(Clade) %>% unique() %>% sort()
     present_specials <- intersect(special_values, clades)
     if (length(present_specials) > 0) {
-      clades <- c(present_specials, setdiff(clades, present_specials))
+      clades <- c(setdiff(clades, present_specials), present_specials)
     }
     
     updateSelectInput(session, "pw_clade1", choices = clades, selected = if(length(clades)>0) clades[1] else NULL)
@@ -278,7 +278,7 @@ server <- function(input, output, session) {
     special_values <- c("Unknown", "unassigned", "Unassigned")
     present_specials <- intersect(special_values, clades)
     if (length(present_specials) > 0) {
-      clades <- c(present_specials, setdiff(clades, present_specials))
+      clades <- c(setdiff(clades, present_specials), present_specials)
     }
     updateSelectInput(session, "lol_ref_group", choices = clades, selected = clades[1])
     updateSelectInput(session, "lol_tar_group", choices = clades, selected = if(length(clades)>1) clades[2] else if(length(clades)>0) clades[1] else NULL)
