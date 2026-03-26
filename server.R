@@ -82,7 +82,17 @@ server <- function(input, output, session) {
     
     final_choices <- setNames(final_ordered_keys, names(group_map)[match(final_ordered_keys, group_map)])
     
-    current_sel <- if (input$sp_group_by %in% available_groups) input$sp_group_by else "Year"
+    # Robustly determine the next selection to avoid reactive loops
+    current_sel <- input$sp_group_by
+    if (is.null(current_sel) || !(current_sel %in% available_groups)) {
+      if ("Year" %in% available_groups) {
+        current_sel <- "Year"
+      } else if (length(available_groups) > 0) {
+        current_sel <- available_groups[1]
+      } else {
+        current_sel <- NULL # No valid selection
+      }
+    }
     updateSelectInput(session, "sp_group_by", choices = final_choices, selected = current_sel)
   })
   
@@ -282,11 +292,22 @@ server <- function(input, output, session) {
   })
 
   # --- HELPER: Update Clade Dropdowns based on Subtype ---
-  observeEvent(pairwise_usage_data(), {
-    req(nrow(pairwise_usage_data()) > 0)
+  observeEvent(list(input$global_subtype, input$variation_type, input$pw_group_by), {
+    req(input$global_subtype, input$variation_type, input$pw_group_by)
+    
+    # Fast path: Check one gene instead of evaluating pairwise_usage_data() which eagerly loads all genes
+    genes <- list.dirs(paste0("data/", input$global_subtype, "/", input$variation_type, "/"), full.names = FALSE, recursive = FALSE)
+    if(length(genes) == 0) return()
+    gene <- if("HA" %in% genes) "HA" else genes[1]
+    
+    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", gene, "/", tolower(input$variation_type), "_usage_by_", input$pw_group_by, ".rds")
+    df <- get_lazy_table(rds_file)
+    if(is.null(df)) return()
+    
+    clades <- if(input$pw_group_by %in% colnames(df)) unique(as.character(df[[input$pw_group_by]])) else if("Clade" %in% colnames(df)) unique(as.character(df$Clade)) else "Unknown"
+    clades <- sort(clades)
     
     special_values <- c("Unknown", "unassigned", "Unassigned")
-    clades <- pairwise_usage_data() %>% filter(Group == input$global_subtype) %>% pull(Clade) %>% unique() %>% sort()
     present_specials <- intersect(special_values, clades)
     if (length(present_specials) > 0) {
       clades <- c(setdiff(clades, present_specials), present_specials)
@@ -294,18 +315,31 @@ server <- function(input, output, session) {
     
     updateSelectInput(session, "pw_clade1", choices = clades, selected = if(length(clades)>0) clades[1] else NULL)
     updateSelectInput(session, "pw_clade2", choices = clades, selected = if(length(clades)>1) clades[2] else if(length(clades)>0) clades[1] else NULL)
-  })
-  observeEvent(list(ent_usage_data(), input$ent_gene), {
-    req(nrow(ent_usage_data()) > 0, input$ent_gene)
-    clade_choices <- ent_usage_data() %>% 
-      filter(Group == input$global_subtype, Gene == input$ent_gene) %>% 
-      pull(Clade) %>% unique() %>% sort()
+  }, ignoreInit = TRUE)
+  
+  observeEvent(list(input$global_subtype, input$variation_type, input$ent_group_by, input$ent_gene), {
+    req(input$global_subtype, input$variation_type, input$ent_group_by, input$ent_gene)
+    
+    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$ent_gene, "/", tolower(input$variation_type), "_usage_by_", input$ent_group_by, ".rds")
+    df <- get_lazy_table(rds_file)
+    if(is.null(df)) return()
+    
+    clades <- if(input$ent_group_by %in% colnames(df)) unique(as.character(df[[input$ent_group_by]])) else if("Clade" %in% colnames(df)) unique(as.character(df$Clade)) else "Unknown"
+    clade_choices <- sort(clades)
     
     updateSelectInput(session, "ent_group", choices = c("All", clade_choices), selected = "All")
-  })
-  observeEvent(lol_usage_data(), {
-    req(nrow(lol_usage_data()) > 0)
-    clades <- lol_usage_data() %>% filter(Group == input$global_subtype) %>% pull(Clade) %>% unique() %>% sort()
+  }, ignoreInit = TRUE)
+  
+  observeEvent(list(input$global_subtype, input$variation_type, input$lol_group_by, input$lol_gene), {
+    req(input$global_subtype, input$variation_type, input$lol_group_by, input$lol_gene)
+    
+    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$lol_gene, "/", tolower(input$variation_type), "_usage_by_", input$lol_group_by, ".rds")
+    df <- get_lazy_table(rds_file)
+    if(is.null(df)) return()
+    
+    clades <- if(input$lol_group_by %in% colnames(df)) unique(as.character(df[[input$lol_group_by]])) else if("Clade" %in% colnames(df)) unique(as.character(df$Clade)) else "Unknown"
+    clades <- sort(clades)
+    
     special_values <- c("Unknown", "unassigned", "Unassigned")
     present_specials <- intersect(special_values, clades)
     if (length(present_specials) > 0) {
@@ -313,7 +347,7 @@ server <- function(input, output, session) {
     }
     updateSelectInput(session, "lol_ref_group", choices = clades, selected = clades[1])
     updateSelectInput(session, "lol_tar_group", choices = clades, selected = if(length(clades)>1) clades[2] else if(length(clades)>0) clades[1] else NULL)
-  })
+  }, ignoreInit = TRUE)
   
   # --- HELPER: Dynamically Update Position Limit based on Gene Length (Tab 1) ---
   observeEvent(list(input$sp_gene, input$variation_type), {
@@ -536,7 +570,13 @@ server <- function(input, output, session) {
     updateNumericInput(session, "sp_position", value = as.numeric(row_data$Position))
   })
   
-  sp_filtered_data <- reactive({
+  # This reactiveVal will hold the data for the Single Position Explorer.
+  # It acts as a buffer, allowing us to show a waiter during calculation.
+  sp_data_val <- reactiveVal()
+
+  # This observer triggers when any relevant input changes. It performs the heavy
+  # calculation and shows a full-screen waiter while doing so.
+  observeEvent(list(input$global_subtype, input$sp_gene, input$sp_position, input$sp_group_by, input$variation_type, input$sp_min_seqs, input$sp_hide_empty_years), {
     subtype   <- input$global_subtype
     gene      <- input$sp_gene
     pos       <- input$sp_position
@@ -544,15 +584,26 @@ server <- function(input, output, session) {
     var_type  <- input$variation_type
     
     req(subtype, gene, pos, group_col, var_type)
+
+    # Show the full-screen, modal waiter
+    waiter_show(
+      html = tagList(
+        spin_fading_circles(),
+        tags$h3("Loading Data...", style = "color:white; margin-top: 20px;"),
+        tags$p("Please wait while we fetch and process the records.", style = "color:white;")
+      ),
+      color = "rgba(44, 62, 80, 0.9)"
+    )
+    on.exit(waiter_hide(), add = TRUE)
     
     var_lower <- tolower(var_type)
     rds_file <- paste0("data/", subtype, "/", var_type, "/", gene, "/", var_lower, "_usage_by_", group_col, ".rds")
     data <- get_lazy_table(rds_file)
     
-    validate(need(!is.null(data), paste("Table not found for group:", group_col)))
-    validate(need(group_col %in% colnames(data), "Updating data..."))
+    # Handle cases where data is missing or inconsistent
+    if (is.null(data)) { sp_data_val(paste("Table not found for group:", group_col)); return() }
+    if (!(group_col %in% colnames(data))) { sp_data_val("Updating data..."); return() }
     
-    # Identfy columns to keep during aggregation
     # We always keep Group, Gene, Position, and the primary grouping column
     group_cols <- c("Group", "Gene", "Position", group_col)
     
@@ -586,16 +637,25 @@ server <- function(input, output, session) {
       filtered <- filtered %>% filter(Valid_Total > 0)
     }
     
-    return(filtered)
+    # Once calculation is done, update the reactiveVal
+    sp_data_val(filtered)
+
+  }, ignoreNULL = TRUE, ignoreInit = TRUE)
+
+  sp_filtered_data <- reactive({
+    # This reactive now simply returns the value calculated in the observer.
+    # Downstream consumers will automatically update when sp_data_val() changes.
+    sp_data_val()
   })
   
   sp_plot_ggplot <- reactive({
     data <- sp_filtered_data()
     
-    if(is.character(data) && grepl("Data Error", data)) return(NULL)
-    req(input$sp_font_size, input$sp_group_by)
-    validate(need(!is.null(data) && nrow(data) > 0, "No data available."))
+    # If data is not a dataframe, it's a message from the observer (e.g., "Updating...").
+    validate(need(is.data.frame(data), data))
+    validate(need(nrow(data) > 0, "No data available for the current selection."))
     
+    req(input$sp_font_size, input$sp_group_by)
     group_col <- input$sp_group_by
     show_counts <- isTRUE(input$sp_show_counts)
     y_col <- if(show_counts) "Count" else "Frequency(%)"
@@ -721,6 +781,11 @@ server <- function(input, output, session) {
   
   output$sp_aa_table <- renderDT({
     data <- sp_filtered_data()
+    
+    # Handle messages from the observer (e.g., "Updating...") or empty dataframes
+    validate(need(is.data.frame(data), data))
+    validate(need(nrow(data) > 0, "No data to display for this selection."))
+    
     req(input$sp_group_by)
     
     # Identify which columns are actually available in the data
