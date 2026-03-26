@@ -330,7 +330,7 @@ lazy_cache <- new.env(parent = emptyenv())
 lazy_cache$keys <- character(0)
 lazy_cache$data <- list()
 
-get_lazy_table <- function(rds_path, max_tables = 3) {
+get_lazy_table <- function(rds_path, max_tables = 3, max_mem_mb = 600) {
   if (!file.exists(rds_path)) return(NULL)
   
   if (rds_path %in% lazy_cache$keys) {
@@ -339,13 +339,21 @@ get_lazy_table <- function(rds_path, max_tables = 3) {
     return(lazy_cache$data[[rds_path]])
   }
   
+  # Check memory usage against threshold before attempting to load new data
+  if (sum(gc(verbose = FALSE)[, 2]) > max_mem_mb) {
+    message("Memory usage exceeds ", max_mem_mb, " MB threshold. Clearing cache...")
+    lazy_cache$keys <- character(0)
+    lazy_cache$data <- list()
+    gc(verbose = FALSE)
+  }
+
   # Read from disk and store in cache
   df <- readRDS(rds_path)
   lazy_cache$keys <- c(lazy_cache$keys, rds_path)
   lazy_cache$data[[rds_path]] <- df
   
   # Evict oldest if limit exceeded
-  if (length(lazy_cache$keys) > max_tables) {
+  while (length(lazy_cache$keys) > max_tables) {
     evict <- lazy_cache$keys[1]
     lazy_cache$keys <- lazy_cache$keys[-1]
     lazy_cache$data[[evict]] <- NULL
