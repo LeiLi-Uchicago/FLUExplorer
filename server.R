@@ -144,12 +144,12 @@ server <- function(input, output, session) {
     sel_sp   <- get_best_gene(input$sp_gene, genes)
     sel_ent  <- get_best_gene(input$ent_gene, genes)
     sel_lol  <- get_best_gene(input$lol_gene, genes)
-    sel_heat <- get_best_gene(input$heat_gene, genes)
+    # sel_heat <- get_best_gene(input$heat_gene, genes)
     
     updateSelectInput(session, "sp_gene", choices = genes, selected = sel_sp)
     updateSelectInput(session, "ent_gene", choices = genes, selected = sel_ent)
     updateSelectInput(session, "lol_gene", choices = genes, selected = sel_lol)
-    updateSelectInput(session, "heat_gene", choices = genes, selected = sel_heat)
+    # updateSelectInput(session, "heat_gene", choices = genes, selected = sel_heat)
   })
   
   # --- HELPER: Update Pairwise & Landscape Grouping Choices ---
@@ -179,7 +179,7 @@ server <- function(input, output, session) {
     updateSelectInput(session, "pw_group_by", choices = final_choices, selected = current_sel)
     updateSelectInput(session, "ent_group_by", choices = final_choices, selected = current_sel)
     updateSelectInput(session, "lol_group_by", choices = final_choices, selected = current_sel)
-    updateSelectInput(session, "heat_group_by", choices = final_choices, selected = current_sel)
+    # updateSelectInput(session, "heat_group_by", choices = final_choices, selected = current_sel)
   })
 
   pairwise_usage_data <- reactive({
@@ -238,22 +238,22 @@ server <- function(input, output, session) {
     return(data.frame(Group=character(), Gene=character(), Clade=character(), Position=numeric(), AminoAcid=character(), Count=numeric()))
   })
 
-  heat_usage_data <- reactive({
-    req(input$global_subtype, input$variation_type, input$heat_group_by, input$heat_gene)
-    var_lower <- tolower(input$variation_type)
-    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$heat_gene, "/", var_lower, "_usage_by_", input$heat_group_by, ".rds")
-    
-    df <- get_lazy_table(rds_file)
-    if (!is.null(df)) {
-      if (input$heat_group_by %in% colnames(df)) {
-        df <- df %>% dplyr::rename(Clade = !!sym(input$heat_group_by))
-      } else if (!"Clade" %in% colnames(df)) {
-        df$Clade <- "Unknown"
-      }
-      return(df)
-    }
-    return(data.frame(Group=character(), Gene=character(), Clade=character(), Position=numeric(), AminoAcid=character(), Count=numeric()))
-  })
+  # heat_usage_data <- reactive({
+  #   req(input$global_subtype, input$variation_type, input$heat_group_by, input$heat_gene)
+  #   var_lower <- tolower(input$variation_type)
+  #   rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$heat_gene, "/", var_lower, "_usage_by_", input$heat_group_by, ".rds")
+  #   
+  #   df <- get_lazy_table(rds_file)
+  #   if (!is.null(df)) {
+  #     if (input$heat_group_by %in% colnames(df)) {
+  #       df <- df %>% dplyr::rename(Clade = !!sym(input$heat_group_by))
+  #     } else if (!"Clade" %in% colnames(df)) {
+  #       df$Clade <- "Unknown"
+  #     }
+  #     return(df)
+  #   }
+  #   return(data.frame(Group=character(), Gene=character(), Clade=character(), Position=numeric(), AminoAcid=character(), Count=numeric()))
+  # })
 
   # --- HELPER: Update Clade Dropdowns based on Subtype ---
   observeEvent(list(input$global_subtype, input$variation_type, input$pw_group_by), {
@@ -1422,155 +1422,155 @@ server <- function(input, output, session) {
   # ==========================================
   # SERVER: TAB 5 - CONSENSUS HEATMAP (msaR)
   # ==========================================
-  output$heat_plot_title <- renderText({ 
-    mode_text <- if(input$variation_type == "AA") "Amino Acid" else "Nucleotide"
-    paste("Interactive Consensus", mode_text, "MSA - Subtype", input$global_subtype, "| Gene", input$heat_gene) 
-  })
-  
-  output$msa_dynamic_container <- renderUI({
-    req(input$global_subtype)
-    clade_count <- heat_usage_data() %>% filter(Group == input$global_subtype) %>% pull(Clade) %>% unique() %>% length()
-    
-    if (!is.null(input$show_mut_only) && input$show_mut_only) {
-      clade_count <- clade_count + 1
-    }
-    
-    outer_height <- (clade_count * 20) + 150
-    msaROutput("heat_plot", width = "100%", height = paste0(outer_height, "px"))
-  })
-  
-  output$heat_plot <- renderMsaR({
-    req(input$global_subtype, input$heat_gene)
-    
-    cache_dir <- "data"
-    if (!dir.exists(cache_dir)) dir.create(cache_dir, showWarnings = FALSE)
-    
-    safe_subtype <- gsub("[^A-Za-z0-9_]", "_", input$global_subtype)
-    safe_gene <- gsub("[^A-Za-z0-9_]", "_", input$heat_gene)
-    safe_group <- gsub("[^A-Za-z0-9_]", "_", input$heat_group_by)
-    
-    prefix <- if(input$variation_type == "AA") "MSA_AA_" else "MSA_NT_"
-    # Filename no longer includes minFreq as it is removed
-    aln_filename <- file.path(cache_dir, paste0(prefix, safe_subtype, "_", safe_gene, "_", safe_group, ".fasta"))
-    
-    if (file.exists(aln_filename)) {
-      if(input$variation_type == "AA") {
-        aligned_strings <- Biostrings::readAAStringSet(aln_filename)
-      } else {
-        aligned_strings <- Biostrings::readDNAStringSet(aln_filename)
-      }
-      original_clade_order <- names(aligned_strings) 
-      
-    } else {
-      # 1. Prepare Base Grid of All Positions and Clades to ensure NO GAPS
-      all_pos_in_gene <- heat_usage_data() %>% 
-        filter(Group == input$global_subtype, Gene == input$heat_gene) %>% 
-        pull(Position) %>% unique() %>% sort()
-      
-      all_clades_in_group <- heat_usage_data() %>% 
-        filter(Group == input$global_subtype, Gene == input$heat_gene) %>% 
-        pull(Clade) %>% unique() %>% sort()
-      
-      grid <- expand.grid(Clade = all_clades_in_group, Position = all_pos_in_gene, stringsAsFactors = FALSE)
-      
-      # 2. Filter and Identify Majority Character per Position/Clade
-      exclude_chars <- if(input$variation_type == "AA") c("X", "-") else c("N", "n", "-")
-      
-      raw_data <- heat_usage_data() %>% 
-        filter(Group == input$global_subtype, Gene == input$heat_gene) %>%
-        # Filter out ambiguous/gaps for calculation
-        filter(!(AminoAcid %in% exclude_chars)) %>% 
-        group_by(Clade, Position, AminoAcid) %>%
-        summarise(Total_Count = sum(Count), .groups = "drop") %>%
-        group_by(Clade, Position) %>%
-        filter(Total_Count == max(Total_Count)) %>%
-        filter(row_number() == 1) %>%
-        ungroup()
-      
-      # 3. Merge with Grid and Fill Gaps with "-"
-      complete_data <- grid %>%
-        left_join(raw_data, by = c("Clade", "Position")) %>%
-        mutate(AminoAcid = ifelse(is.na(AminoAcid), "-", AminoAcid)) %>%
-        arrange(Clade, Position)
-      
-      # 4. Reconstruct the consensus sequences
-      raw_seqs <- complete_data %>%
-        group_by(Clade) %>%
-        summarise(seq = toupper(paste(AminoAcid, collapse = "")), .groups = "drop") %>%
-        arrange(Clade)
-      
-      original_clade_order <- raw_seqs$Clade
-      
-      if(input$variation_type == "AA") {
-        unaligned_strings <- Biostrings::AAStringSet(setNames(raw_seqs$seq, original_clade_order))
-      } else {
-        unaligned_strings <- Biostrings::DNAStringSet(setNames(raw_seqs$seq, original_clade_order))
-      }
-      
-      waiter_show(
-        html = tagList(
-          spin_fading_circles(), 
-          h3(paste("Running ClustalW Alignment for", input$heat_gene, "sequences..."), style = "color: white; margin-top: 20px;")
-        ),
-        color = "rgba(44, 62, 80, 0.9)"
-      )
-      
-      on.exit(waiter_hide(), add = TRUE) 
-      
-      aligned_msa <- suppressMessages(msa::msa(unaligned_strings, method = "ClustalW", order = "input"))
-      
-      if(input$variation_type == "AA") {
-        aligned_strings <- as(aligned_msa, "AAStringSet")
-      } else {
-        aligned_strings <- as(aligned_msa, "DNAStringSet")
-      }
-      aligned_strings <- aligned_strings[original_clade_order]
-      
-      Biostrings::writeXStringSet(aligned_strings, filepath = aln_filename)
-      
-    } 
-    
-    if (input$show_mut_only) {
-      seq_char_matrix <- as.matrix(aligned_strings)
-      exclude_chars <- if(input$variation_type == "AA") c("X", "-") else c("N", "n", "-")
-      
-      consensus_seq <- apply(seq_char_matrix, 2, function(col) {
-        # Filter out X/- or N/- before finding the majority
-        valid_col <- col[!(toupper(col) %in% toupper(exclude_chars))]
-        if(length(valid_col) == 0) return("-") # Fallback if all are ambiguous
-        freqs <- table(valid_col)
-        names(freqs)[which.max(freqs)] 
-      })
-      
-      for (i in 1:nrow(seq_char_matrix)) {
-        match_idx <- seq_char_matrix[i, ] == consensus_seq
-        seq_char_matrix[i, match_idx] <- "."
-      }
-      
-      consensus_string <- paste(consensus_seq, collapse = "")
-      new_seqs <- apply(seq_char_matrix, 1, paste, collapse = "")
-      
-      if(input$variation_type == "AA") {
-        final_strings <- Biostrings::AAStringSet(c(Consensus = consensus_string, new_seqs[original_clade_order]))
-      } else {
-        final_strings <- Biostrings::DNAStringSet(c(Consensus = consensus_string, new_seqs[original_clade_order]))
-      }
-      
-    } else {
-      final_strings <- aligned_strings
-    }
-    
-    inner_align_height <- (length(final_strings) * 20) + 20
-    
-    msaR(
-      final_strings, 
-      menu = TRUE, 
-      overviewbox = FALSE, 
-      seqlogo = !isTRUE(input$show_mut_only), 
-      colorscheme = if(input$variation_type == "AA") "clustal" else "nucleotide",
-      alignmentHeight = inner_align_height
-      )
-      })
+  # output$heat_plot_title <- renderText({ 
+  #   mode_text <- if(input$variation_type == "AA") "Amino Acid" else "Nucleotide"
+  #   paste("Interactive Consensus", mode_text, "MSA - Subtype", input$global_subtype, "| Gene", input$heat_gene) 
+  # })
+  # 
+  # output$msa_dynamic_container <- renderUI({
+  #   req(input$global_subtype)
+  #   clade_count <- heat_usage_data() %>% filter(Group == input$global_subtype) %>% pull(Clade) %>% unique() %>% length()
+  #   
+  #   if (!is.null(input$show_mut_only) && input$show_mut_only) {
+  #     clade_count <- clade_count + 1
+  #   }
+  #   
+  #   outer_height <- (clade_count * 20) + 150
+  #   msaROutput("heat_plot", width = "100%", height = paste0(outer_height, "px"))
+  # })
+  # 
+  # output$heat_plot <- renderMsaR({
+  #   req(input$global_subtype, input$heat_gene)
+  #   
+  #   cache_dir <- "data"
+  #   if (!dir.exists(cache_dir)) dir.create(cache_dir, showWarnings = FALSE)
+  #   
+  #   safe_subtype <- gsub("[^A-Za-z0-9_]", "_", input$global_subtype)
+  #   safe_gene <- gsub("[^A-Za-z0-9_]", "_", input$heat_gene)
+  #   safe_group <- gsub("[^A-Za-z0-9_]", "_", input$heat_group_by)
+  #   
+  #   prefix <- if(input$variation_type == "AA") "MSA_AA_" else "MSA_NT_"
+  #   # Filename no longer includes minFreq as it is removed
+  #   aln_filename <- file.path(cache_dir, paste0(prefix, safe_subtype, "_", safe_gene, "_", safe_group, ".fasta"))
+  #   
+  #   if (file.exists(aln_filename)) {
+  #     if(input$variation_type == "AA") {
+  #       aligned_strings <- Biostrings::readAAStringSet(aln_filename)
+  #     } else {
+  #       aligned_strings <- Biostrings::readDNAStringSet(aln_filename)
+  #     }
+  #     original_clade_order <- names(aligned_strings) 
+  #     
+  #   } else {
+  #     # 1. Prepare Base Grid of All Positions and Clades to ensure NO GAPS
+  #     all_pos_in_gene <- heat_usage_data() %>% 
+  #       filter(Group == input$global_subtype, Gene == input$heat_gene) %>% 
+  #       pull(Position) %>% unique() %>% sort()
+  #     
+  #     all_clades_in_group <- heat_usage_data() %>% 
+  #       filter(Group == input$global_subtype, Gene == input$heat_gene) %>% 
+  #       pull(Clade) %>% unique() %>% sort()
+  #     
+  #     grid <- expand.grid(Clade = all_clades_in_group, Position = all_pos_in_gene, stringsAsFactors = FALSE)
+  #     
+  #     # 2. Filter and Identify Majority Character per Position/Clade
+  #     exclude_chars <- if(input$variation_type == "AA") c("X", "-") else c("N", "n", "-")
+  #     
+  #     raw_data <- heat_usage_data() %>% 
+  #       filter(Group == input$global_subtype, Gene == input$heat_gene) %>%
+  #       # Filter out ambiguous/gaps for calculation
+  #       filter(!(AminoAcid %in% exclude_chars)) %>% 
+  #       group_by(Clade, Position, AminoAcid) %>%
+  #       summarise(Total_Count = sum(Count), .groups = "drop") %>%
+  #       group_by(Clade, Position) %>%
+  #       filter(Total_Count == max(Total_Count)) %>%
+  #       filter(row_number() == 1) %>%
+  #       ungroup()
+  #     
+  #     # 3. Merge with Grid and Fill Gaps with "-"
+  #     complete_data <- grid %>%
+  #       left_join(raw_data, by = c("Clade", "Position")) %>%
+  #       mutate(AminoAcid = ifelse(is.na(AminoAcid), "-", AminoAcid)) %>%
+  #       arrange(Clade, Position)
+  #     
+  #     # 4. Reconstruct the consensus sequences
+  #     raw_seqs <- complete_data %>%
+  #       group_by(Clade) %>%
+  #       summarise(seq = toupper(paste(AminoAcid, collapse = "")), .groups = "drop") %>%
+  #       arrange(Clade)
+  #     
+  #     original_clade_order <- raw_seqs$Clade
+  #     
+  #     if(input$variation_type == "AA") {
+  #       unaligned_strings <- Biostrings::AAStringSet(setNames(raw_seqs$seq, original_clade_order))
+  #     } else {
+  #       unaligned_strings <- Biostrings::DNAStringSet(setNames(raw_seqs$seq, original_clade_order))
+  #     }
+  #     
+  #     waiter_show(
+  #       html = tagList(
+  #         spin_fading_circles(), 
+  #         h3(paste("Running ClustalW Alignment for", input$heat_gene, "sequences..."), style = "color: white; margin-top: 20px;")
+  #       ),
+  #       color = "rgba(44, 62, 80, 0.9)"
+  #     )
+  #     
+  #     on.exit(waiter_hide(), add = TRUE) 
+  #     
+  #     aligned_msa <- suppressMessages(msa::msa(unaligned_strings, method = "ClustalW", order = "input"))
+  #     
+  #     if(input$variation_type == "AA") {
+  #       aligned_strings <- as(aligned_msa, "AAStringSet")
+  #     } else {
+  #       aligned_strings <- as(aligned_msa, "DNAStringSet")
+  #     }
+  #     aligned_strings <- aligned_strings[original_clade_order]
+  #     
+  #     Biostrings::writeXStringSet(aligned_strings, filepath = aln_filename)
+  #     
+  #   } 
+  #   
+  #   if (input$show_mut_only) {
+  #     seq_char_matrix <- as.matrix(aligned_strings)
+  #     exclude_chars <- if(input$variation_type == "AA") c("X", "-") else c("N", "n", "-")
+  #     
+  #     consensus_seq <- apply(seq_char_matrix, 2, function(col) {
+  #       # Filter out X/- or N/- before finding the majority
+  #       valid_col <- col[!(toupper(col) %in% toupper(exclude_chars))]
+  #       if(length(valid_col) == 0) return("-") # Fallback if all are ambiguous
+  #       freqs <- table(valid_col)
+  #       names(freqs)[which.max(freqs)] 
+  #     })
+  #     
+  #     for (i in 1:nrow(seq_char_matrix)) {
+  #       match_idx <- seq_char_matrix[i, ] == consensus_seq
+  #       seq_char_matrix[i, match_idx] <- "."
+  #     }
+  #     
+  #     consensus_string <- paste(consensus_seq, collapse = "")
+  #     new_seqs <- apply(seq_char_matrix, 1, paste, collapse = "")
+  #     
+  #     if(input$variation_type == "AA") {
+  #       final_strings <- Biostrings::AAStringSet(c(Consensus = consensus_string, new_seqs[original_clade_order]))
+  #     } else {
+  #       final_strings <- Biostrings::DNAStringSet(c(Consensus = consensus_string, new_seqs[original_clade_order]))
+  #     }
+  #     
+  #   } else {
+  #     final_strings <- aligned_strings
+  #   }
+  #   
+  #   inner_align_height <- (length(final_strings) * 20) + 20
+  #   
+  #   msaR(
+  #     final_strings, 
+  #     menu = TRUE, 
+  #     overviewbox = FALSE, 
+  #     seqlogo = !isTRUE(input$show_mut_only), 
+  #     colorscheme = if(input$variation_type == "AA") "clustal" else "nucleotide",
+  #     alignmentHeight = inner_align_height
+  #     )
+  #     })
 
       # --- HIDE LOADING CURTAIN WHEN READY ---
       session$onFlushed(function() {

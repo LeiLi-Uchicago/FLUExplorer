@@ -258,25 +258,25 @@ ui <- navbarPage(
                       )
              ),
              
-             # TAB 5: CONSENSUS MSA (FULL-WIDTH LAYOUT)
-             tabPanel("Consensus MSA Map",
-                      fluidPage(
-                        wellPanel(
-                          fluidRow(
-                            column(3, helpText("Interactive Multiple Sequence Alignment. Subtype is controlled globally.")),
-                            column(3, selectInput("heat_group_by", "Group by:", choices = NULL)),
-                            column(3, selectInput("heat_gene", "Gene:", choices = NULL)),
-                            column(3, div(style = "margin-top: 25px;", checkboxInput("show_mut_only", "Show Mutations Only", value = FALSE)))
-                          )
-                        ),
-                        fluidRow(
-                          column(12,
-                                 h3(textOutput("heat_plot_title")),
-                                 withWaiter(uiOutput("msa_dynamic_container")) 
-                          )
-                        )
-                      )
-             )
+            #  # TAB 5: CONSENSUS MSA (FULL-WIDTH LAYOUT)
+            #  tabPanel("Consensus MSA Map",
+            #           fluidPage(
+            #             wellPanel(
+            #               fluidRow(
+            #                 column(3, helpText("Interactive Multiple Sequence Alignment. Subtype is controlled globally.")),
+            #                 column(3, selectInput("heat_group_by", "Group by:", choices = NULL)),
+            #                 column(3, selectInput("heat_gene", "Gene:", choices = NULL)),
+            #                 column(3, div(style = "margin-top: 25px;", checkboxInput("show_mut_only", "Show Mutations Only", value = FALSE)))
+            #               )
+            #             ),
+            #             fluidRow(
+            #               column(12,
+            #                      h3(textOutput("heat_plot_title")),
+            #                      withWaiter(uiOutput("msa_dynamic_container")) 
+            #               )
+            #             )
+            #           )
+            #  )
   ),
   
   # ---------------------------------------------------------
