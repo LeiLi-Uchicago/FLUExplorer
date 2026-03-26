@@ -1496,4 +1496,9 @@ server <- function(input, output, session) {
       session$onFlushed(function() {
         waiter_hide()
       }, once = TRUE)
+
+      # --- PRE-RENDER HIDDEN TABS FOR INSTANT UX ---
+      outputOptions(output, "stats_time_plot", suspendWhenHidden = FALSE)
+      outputOptions(output, "stats_geo_plot", suspendWhenHidden = FALSE)
+      outputOptions(output, "stats_clade_plot", suspendWhenHidden = FALSE)
       }
