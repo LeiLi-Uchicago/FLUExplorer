@@ -255,6 +255,10 @@ if (!cache_loaded) {
     ),
     file = RDS_CACHE
   )
+  
+  # --- STARTUP MEMORY FLUSH ---
+  suppressWarnings(rm(all_metadata, metadata_global, meta))
+  gc(verbose = FALSE)
 }
 
 # ==========================================
@@ -326,7 +330,7 @@ lazy_cache <- new.env(parent = emptyenv())
 lazy_cache$keys <- character(0)
 lazy_cache$data <- list()
 
-get_lazy_table <- function(rds_path, max_tables = 5) {
+get_lazy_table <- function(rds_path, max_tables = 3) {
   if (!file.exists(rds_path)) return(NULL)
   
   if (rds_path %in% lazy_cache$keys) {
@@ -345,6 +349,9 @@ get_lazy_table <- function(rds_path, max_tables = 5) {
     evict <- lazy_cache$keys[1]
     lazy_cache$keys <- lazy_cache$keys[-1]
     lazy_cache$data[[evict]] <- NULL
+    
+    # Force memory release back to the OS
+    gc(verbose = FALSE)
   }
   
   return(df)

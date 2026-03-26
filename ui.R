@@ -126,6 +126,16 @@ ui <- navbarPage(
   ),
   
   # ---------------------------------------------------------
+  # MEMORY MONITOR & CONTROL WIDGET
+  # ---------------------------------------------------------
+  tags$div(
+    style = "position: fixed; bottom: 15px; left: 15px; z-index: 9999; background-color: rgba(255,255,255,0.95); padding: 6px 15px; border-radius: 30px; box-shadow: 0 4px 10px rgba(0,0,0,0.15); font-size: 13px; display: flex; align-items: center; gap: 12px; border: 1px solid #dee2e6;",
+    tags$strong(icon("memory"), "RAM:"),
+    textOutput("mem_usage", inline = TRUE),
+    actionButton("free_mem", "Clear Cache", icon = icon("broom"), class = "btn-xs btn-danger", style = "border-radius: 20px; padding: 2px 10px; font-size: 12px; font-weight: bold;")
+  ),
+  
+  # ---------------------------------------------------------
   # TAB 0: HOME
   # ---------------------------------------------------------
   tabPanel("Home",

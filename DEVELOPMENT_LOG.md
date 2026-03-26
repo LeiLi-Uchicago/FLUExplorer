@@ -1,5 +1,22 @@
 # Development Log - FLU Divergence Explorer
 
+## Date: March 26, 2026
+
+### 1. Performance & User Experience (UX) Enhancements
+- **Global & Modal Loaders:** Implemented full-screen `waiter` loading screens across the app (Global context switches, Single Position Explorer, and Pairwise Comparison) to provide immediate visual feedback and freeze the UI during heavy data processing.
+- **Lazy Loading Tabs:** Refactored reactive observers to utilize `session$clientData` hidden states, ensuring that heavy computations only trigger when a specific tab is visible, eliminating background lag.
+- **Removed Cross-Tab Syncing:** Decoupled input dependencies between tabs to prevent reactive cascades and double-loading glitches when changing groups or subtypes.
+
+### 2. Memory Management (Posit Server Optimization)
+- **Real-Time Memory Monitor:** Added a floating widget to the UI to track RAM usage in real-time, including a manual "Clear Cache" button to gracefully release memory.
+- **Aggressive Garbage Collection:** Implemented automatic cache clearing and garbage collection (`gc()`) upon user session termination and during cache evictions.
+- **Cache Tuning:** Reduced the `get_lazy_table()` LRU cache size from 5 to 3 tables and added startup memory flushes to keep the application footprint strictly under Posit Server's 1GB memory limit.
+
+### 3. Feature Deprecation
+- **MSA Tab Removal:** Commented out the Multiple Sequence Alignment (MSA) tab and its associated heavy Bioconductor dependencies (`msaR`, `Biostrings`, `msa`) to substantially conserve RAM and improve app initialization times.
+
+---
+
 ## Date: March 16, 2026
 
 ### 1. Migration from RSV to FLU (H1N1/H3N2)

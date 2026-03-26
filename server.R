@@ -12,6 +12,33 @@ server <- function(input, output, session) {
     if(input$variation_type == "AA") "AA" else "NT"
   })
 
+  # --- MEMORY MONITOR & CONTROL ---
+  mem_timer <- reactiveTimer(5000) # Update every 5 seconds
+  output$mem_usage <- renderText({
+    mem_timer()
+    # gc()[, 2] returns the used memory in MB for Ncells and Vcells
+    mem_mb <- sum(gc()[, 2])
+    paste0(round(mem_mb, 1), " MB")
+  })
+  
+  observeEvent(input$free_mem, {
+    # Clear global LRU cache
+    lazy_cache$keys <- character(0)
+    lazy_cache$data <- list()
+    
+    # Force aggressive garbage collection
+    gc(verbose = FALSE)
+    
+    showNotification("Global data cache cleared and memory freed.", type = "message", duration = 3)
+  })
+  
+  # Clean up session-specific memory when user disconnects
+  session$onSessionEnded(function() {
+    sp_data_val(NULL)
+    pw_diff_val(NULL)
+    gc(verbose = FALSE)
+  })
+
   # --- GLOBAL LOADING INDICATOR FOR CONTEXT SWITCH ---
   observeEvent(list(input$global_subtype, input$variation_type), {
     waiter_show(
