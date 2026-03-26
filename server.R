@@ -12,6 +12,22 @@ server <- function(input, output, session) {
     if(input$variation_type == "AA") "AA" else "NT"
   })
 
+  # --- GLOBAL LOADING INDICATOR FOR CONTEXT SWITCH ---
+  observeEvent(list(input$global_subtype, input$variation_type), {
+    waiter_show(
+      html = tagList(
+        spin_fading_circles(),
+        tags$h3("Updating Dataset...", style = "color:white; margin-top: 20px;"),
+        tags$p("Please wait while we update the application context.", style = "color:white;")
+      ),
+      color = "rgba(44, 62, 80, 0.9)"
+    )
+    
+    session$onFlushed(function() {
+      waiter_hide()
+    }, once = TRUE)
+  }, ignoreInit = TRUE, priority = 100)
+
   available_genes <- reactive({
     req(input$global_subtype, input$variation_type)
     genes <- list.dirs(paste0("data/", input$global_subtype, "/", input$variation_type, "/"), full.names = FALSE, recursive = FALSE)
@@ -907,7 +923,14 @@ server <- function(input, output, session) {
 
   # This observer triggers when any relevant input changes. It performs the heavy
   # calculation and shows a full-screen waiter while doing so.
-  observeEvent(list(input$global_subtype, input$variation_type, input$pw_group_by, input$pw_clade1, input$pw_clade2, input$pw_min_freq), {
+  observeEvent(list(
+    input$global_subtype, input$variation_type, input$pw_group_by, 
+    input$pw_clade1, input$pw_clade2, input$pw_min_freq,
+    session$clientData$output_pw_diff_table_hidden
+  ), {
+    # Prevent execution if the Pairwise Comparison tab is not currently visible
+    if (!isFALSE(session$clientData$output_pw_diff_table_hidden)) return()
+    
     req(input$pw_clade1, input$pw_clade2, input$global_subtype)
     
     # --- FAST SANITY CHECK ---
