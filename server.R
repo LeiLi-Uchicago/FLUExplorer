@@ -304,8 +304,10 @@ server <- function(input, output, session) {
       clades <- c(setdiff(clades, present_specials), present_specials)
     }
     
-    updateSelectInput(session, "pw_clade1", choices = clades, selected = if(length(clades)>0) clades[1] else NULL)
-    updateSelectInput(session, "pw_clade2", choices = clades, selected = if(length(clades)>1) clades[2] else if(length(clades)>0) clades[1] else NULL)
+    clades_choices <- c("Select Group..." = "", clades)
+    
+    updateSelectInput(session, "pw_clade1", choices = clades_choices, selected = "")
+    updateSelectInput(session, "pw_clade2", choices = clades_choices, selected = "")
   }, ignoreInit = TRUE)
   
   observeEvent(list(input$global_subtype, input$variation_type, input$ent_group_by, input$ent_gene), {
@@ -958,7 +960,12 @@ server <- function(input, output, session) {
     # Prevent execution if the Pairwise Comparison tab is not currently visible
     if (!isFALSE(session$clientData$output_pw_diff_table_hidden)) return()
     
-    req(input$pw_clade1, input$pw_clade2, input$global_subtype)
+    req(input$global_subtype)
+    
+    if (is.null(input$pw_clade1) || is.null(input$pw_clade2) || input$pw_clade1 == "" || input$pw_clade2 == "") {
+      pw_diff_val(data.frame(Message = "Please select both a Reference and Target group to begin comparison."))
+      return()
+    }
     
     # --- FAST SANITY CHECK ---
     # Prevent premature execution: If the group changed, wait for the clade dropdowns to update first.
@@ -969,7 +976,7 @@ server <- function(input, output, session) {
       df <- get_lazy_table(rds_file)
       if(!is.null(df)) {
         valid_clades <- if(input$pw_group_by %in% colnames(df)) unique(as.character(df[[input$pw_group_by]])) else if("Clade" %in% colnames(df)) unique(as.character(df$Clade)) else "Unknown"
-        if(!(input$pw_clade1 %in% valid_clades) || !(input$pw_clade2 %in% valid_clades)) return()
+        if(!(input$pw_clade1 %in% c("", valid_clades)) || !(input$pw_clade2 %in% c("", valid_clades))) return()
       }
     }
     
@@ -1224,7 +1231,7 @@ server <- function(input, output, session) {
     filename = function() { paste0("Differences_", input$pw_clade1, "_vs_", input$pw_clade2, ".csv") },
     content = function(file) { 
       data <- pairwise_differences()
-      if(nrow(data)>0) data <- data %>% mutate(Group = input$global_subtype) %>% dplyr::select(Group, everything())
+      if(nrow(data)>0 && !("Message" %in% colnames(data))) data <- data %>% mutate(Group = input$global_subtype) %>% dplyr::select(Group, everything())
       write_csv(data, file) 
     }
   )
@@ -1233,7 +1240,7 @@ server <- function(input, output, session) {
     filename = function() { paste0("Matrices_", input$pw_clade1, "_vs_", input$pw_clade2, ".xlsx") },
     content = function(file) {
       diffs <- pairwise_differences(); wb <- createWorkbook()
-      if(nrow(diffs) == 0) { 
+      if(nrow(diffs) == 0 || "Message" %in% colnames(diffs)) { 
         addWorksheet(wb, "No Differences"); writeData(wb, "No Differences", "No differences found."); saveWorkbook(wb, file, overwrite = TRUE); return() 
       }
       base_df <- data.frame(AminoAcid = if(input$variation_type == "AA") ALL_AAS else c("a","c","g","t","A","C","G","T","N","n","-"))
