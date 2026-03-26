@@ -166,58 +166,6 @@ server <- function(input, output, session) {
     updateSelectInput(session, "heat_group_by", choices = final_choices, selected = current_sel)
   })
 
-  # --- HELPER: Sync Single Position and Other Groupings ---
-  observeEvent(input$sp_group_by, {
-    if (!is.null(input$sp_group_by) && !is.null(input$pw_group_by) && input$sp_group_by != input$pw_group_by) {
-      updateSelectInput(session, "pw_group_by", selected = input$sp_group_by)
-    }
-    if (!is.null(input$sp_group_by) && !is.null(input$ent_group_by) && input$sp_group_by != input$ent_group_by) {
-      updateSelectInput(session, "ent_group_by", selected = input$sp_group_by)
-    }
-    if (!is.null(input$sp_group_by) && !is.null(input$lol_group_by) && input$sp_group_by != input$lol_group_by) {
-      updateSelectInput(session, "lol_group_by", selected = input$sp_group_by)
-    }
-    if (!is.null(input$sp_group_by) && !is.null(input$heat_group_by) && input$sp_group_by != input$heat_group_by) {
-      updateSelectInput(session, "heat_group_by", selected = input$sp_group_by)
-    }
-  }, ignoreInit = TRUE)
-  
-  observeEvent(input$pw_group_by, {
-    if (!is.null(input$pw_group_by) && !is.null(input$sp_group_by) && input$pw_group_by != input$sp_group_by) {
-      updateSelectInput(session, "sp_group_by", selected = input$pw_group_by)
-    }
-  }, ignoreInit = TRUE)
-  
-  observeEvent(input$ent_group_by, {
-    if (!is.null(input$ent_group_by) && !is.null(input$sp_group_by) && input$ent_group_by != input$sp_group_by) {
-      updateSelectInput(session, "sp_group_by", selected = input$ent_group_by)
-    }
-  }, ignoreInit = TRUE)
-
-  observeEvent(input$lol_group_by, {
-    if (!is.null(input$lol_group_by) && !is.null(input$sp_group_by) && input$lol_group_by != input$sp_group_by) {
-      updateSelectInput(session, "sp_group_by", selected = input$lol_group_by)
-    }
-  }, ignoreInit = TRUE)
-
-  observeEvent(input$heat_group_by, {
-    if (!is.null(input$heat_group_by) && !is.null(input$sp_group_by) && input$heat_group_by != input$sp_group_by) {
-      updateSelectInput(session, "sp_group_by", selected = input$heat_group_by)
-    }
-  }, ignoreInit = TRUE)
-
-  observeEvent(input$sp_hide_empty_years, {
-    if (!is.null(input$sp_hide_empty_years) && !is.null(input$pw_hide_empty_years) && input$sp_hide_empty_years != input$pw_hide_empty_years) {
-      updateCheckboxInput(session, "pw_hide_empty_years", value = input$sp_hide_empty_years)
-    }
-  }, ignoreInit = TRUE)
-  
-  observeEvent(input$pw_hide_empty_years, {
-    if (!is.null(input$pw_hide_empty_years) && !is.null(input$sp_hide_empty_years) && input$pw_hide_empty_years != input$sp_hide_empty_years) {
-      updateCheckboxInput(session, "sp_hide_empty_years", value = input$pw_hide_empty_years)
-    }
-  }, ignoreInit = TRUE)
-
   pairwise_usage_data <- reactive({
     req(input$global_subtype, input$variation_type, input$pw_group_by)
     var_lower <- tolower(input$variation_type)
@@ -954,27 +902,71 @@ server <- function(input, output, session) {
       ungroup()
   }
   
-  pairwise_differences <- reactive({
+  # This reactiveVal will hold the data for the Pairwise Comparison table.
+  pw_diff_val <- reactiveVal(data.frame())
+
+  # This observer triggers when any relevant input changes. It performs the heavy
+  # calculation and shows a full-screen waiter while doing so.
+  observeEvent(list(input$global_subtype, input$variation_type, input$pw_group_by, input$pw_clade1, input$pw_clade2, input$pw_min_freq), {
     req(input$pw_clade1, input$pw_clade2, input$global_subtype)
-    if(input$pw_clade1 == input$pw_clade2) return(data.frame())
     
-    # Fetch dominant AA for Clade 1 (Cleaned of X/-)
+    # --- FAST SANITY CHECK ---
+    # Prevent premature execution: If the group changed, wait for the clade dropdowns to update first.
+    genes <- list.dirs(paste0("data/", input$global_subtype, "/", input$variation_type, "/"), full.names = FALSE, recursive = FALSE)
+    if(length(genes) > 0) {
+      gene <- if("HA" %in% genes) "HA" else genes[1]
+      rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", gene, "/", tolower(input$variation_type), "_usage_by_", input$pw_group_by, ".rds")
+      df <- get_lazy_table(rds_file)
+      if(!is.null(df)) {
+        valid_clades <- if(input$pw_group_by %in% colnames(df)) unique(as.character(df[[input$pw_group_by]])) else if("Clade" %in% colnames(df)) unique(as.character(df$Clade)) else "Unknown"
+        if(!(input$pw_clade1 %in% valid_clades) || !(input$pw_clade2 %in% valid_clades)) return()
+      }
+    }
+    
+    if(input$pw_clade1 == input$pw_clade2) {
+      pw_diff_val(data.frame(Message = "Reference and Target groups are identical. Please select different groups."))
+      return()
+    }
+
+    # Show the full-screen, modal waiter
+    waiter_show(
+      html = tagList(
+        spin_fading_circles(),
+        tags$h3("Comparing Groups...", style = "color:white; margin-top: 20px;"),
+        tags$p("Please wait while we identify robust differences.", style = "color:white;")
+      ),
+      color = "rgba(44, 62, 80, 0.9)"
+    )
+    on.exit(waiter_hide(), add = TRUE)
+    
     c1_dom <- get_aggregated_clade(input$global_subtype, input$pw_clade1, input$pw_min_freq) %>%
       dplyr::select(Gene, Position, Clade1_AA = AminoAcid, Clade1_Freq = Freq)
     
-    # Fetch dominant AA for Clade 2 (Cleaned of X/-)
     c2_dom <- get_aggregated_clade(input$global_subtype, input$pw_clade2, input$pw_min_freq) %>%
       dplyr::select(Gene, Position, Clade2_AA = AminoAcid, Clade2_Freq = Freq)
     
-    # Join and filter for actual substitutions (e.g., A -> V)
-    inner_join(c1_dom, c2_dom, by = c("Gene", "Position")) %>% 
+    diffs <- inner_join(c1_dom, c2_dom, by = c("Gene", "Position")) %>% 
       filter(Clade1_AA != Clade2_AA) %>% 
       arrange(Gene, Position)
+
+    pw_diff_val(diffs)
+
+  }, ignoreNULL = TRUE, ignoreInit = TRUE)
+
+  # The original reactive now just returns the value from the observer
+  pairwise_differences <- reactive({
+    pw_diff_val()
   })
   
   output$pw_diff_table <- renderDT({
     data <- pairwise_differences()
-    if(nrow(data) == 0) return(datatable(data.frame(Message = "No robust differences found."), rownames = FALSE))
+    
+    # If the dataframe has a 'Message' column, it's an error/info message from the observer
+    if ("Message" %in% colnames(data)) {
+      return(datatable(data, rownames = FALSE, options = list(dom = 't')))
+    }
+    
+    if(nrow(data) == 0) return(datatable(data.frame(Message = "No robust differences found for the current selection."), rownames = FALSE, options = list(dom = 't')))
     
     display_data <- data %>% 
       mutate(Position = sprintf('<a href="#" onclick="Shiny.setInputValue(\'modal_clicked\', \'%s|%s\', {priority: \'event\'});"><strong>%s</strong></a>', Gene, Position, Position)) %>% 
