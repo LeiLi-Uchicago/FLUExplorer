@@ -157,7 +157,8 @@ server <- function(input, output, session) {
   }
 
   sp_year_month_choices <- reactive({
-    req(input$global_subtype, input$variation_type, input$sp_gene, input$sp_group_by, input$sp_position)
+    req(input$global_subtype, input$variation_type, input$sp_gene, input$sp_group_by, sp_position_debounced())
+    pos <- sp_position_debounced()
 
     rds_file <- paste0(
       "data/", input$global_subtype, "/", input$variation_type, "/", input$sp_gene, "/",
@@ -170,7 +171,7 @@ server <- function(input, output, session) {
     data <- add_year_month_filter_column(data)
 
     ym_values <- data %>%
-      filter(Group == input$global_subtype, Gene == input$sp_gene, Position == input$sp_position) %>%
+      filter(Group == input$global_subtype, Gene == input$sp_gene, Position == pos) %>%
       pull(Year_Month_Filter) %>%
       unique() %>%
       stats::na.omit() %>%
@@ -640,13 +641,14 @@ server <- function(input, output, session) {
   # This reactiveVal will hold the data for the Single Position Explorer.
   # It acts as a buffer, allowing us to show a waiter during calculation.
   sp_data_val <- reactiveVal()
+  sp_position_debounced <- debounce(reactive(input$sp_position), 800)
 
   # This observer triggers when any relevant input changes. It performs the heavy
   # calculation and shows a full-screen waiter while doing so.
-  observeEvent(list(input$global_subtype, input$sp_gene, input$sp_position, input$sp_group_by, input$variation_type, input$sp_min_seqs, input$sp_hide_empty_years, input$sp_year_month_range), {
+  observeEvent(list(input$global_subtype, input$sp_gene, sp_position_debounced(), input$sp_group_by, input$variation_type, input$sp_min_seqs, input$sp_hide_empty_years, input$sp_year_month_range), {
     subtype   <- input$global_subtype
     gene      <- input$sp_gene
-    pos       <- input$sp_position
+    pos       <- sp_position_debounced()
     group_col <- input$sp_group_by 
     var_type  <- input$variation_type
     
@@ -898,14 +900,14 @@ server <- function(input, output, session) {
   })
   
   output$sp_position_details <- renderUI({
-    req(input$global_subtype, input$sp_gene, input$sp_position)
+    req(input$global_subtype, input$sp_gene, sp_position_debounced())
     # Only show important sites information in Amino Acid mode
     if (input$variation_type == "NT") return(NULL)
     
     match <- important_pos_df %>% 
       filter(Subtype == as.character(input$global_subtype), 
              Gene == as.character(input$sp_gene), 
-             Position == input$sp_position)
+             Position == sp_position_debounced())
     
     if(nrow(match) > 0) {
       wellPanel(style = "background-color: #e3f2fd; border-left: 5px solid #2196f3;",

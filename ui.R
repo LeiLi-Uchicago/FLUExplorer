@@ -314,16 +314,26 @@ ui <- navbarPage(
                  column(4,
                         h5("Precise Access", style="font-weight: bold; color: #2980b9;"),
                         fluidRow(
-                          column(4, selectInput("sp_gene", "Gene:", choices = NULL)),
-                          column(8,
+                          column(12, selectInput("sp_gene", "Gene:", choices = NULL))
+                        ),
+                        fluidRow(
+                          column(12,
                                  uiOutput("sp_range_label"),
-                                 div(style = "display: flex; align-items: center; gap: 5px; margin-bottom: 15px;",
-                                     actionButton("sp_pos_minus", "-", class = "btn-primary", style = "padding: 6px 12px; font-weight: bold; height: 34px;"),
-                                     div(style = "width: 80px;", 
-                                         tags$style(HTML("#sp_position { margin-bottom: 0px !important; height: 34px; text-align: center; }")),
+                                 div(style = "display: flex; align-items: flex-start; gap: 5px; margin-bottom: 15px;",
+                                     actionButton("sp_pos_minus", "-", class = "btn-primary", style = "padding: 6px 12px; font-weight: bold; height: 34px; margin-top: 0;"),
+                                     div(style = "width: 80px; display: flex; align-items: flex-start;",
+                                         tags$style(HTML("
+                                           #sp_position { margin-bottom: 0px !important; }
+                                           #sp_position input {
+                                             height: 34px;
+                                             text-align: center;
+                                             padding-top: 6px;
+                                             padding-bottom: 6px;
+                                           }
+                                         ")),
                                          numericInput("sp_position", label = NULL, value = 1, min = 1, max = 1000)
                                      ),
-                                     actionButton("sp_pos_plus", "+", class = "btn-primary", style = "padding: 6px 12px; font-weight: bold; height: 34px;"),
+                                     actionButton("sp_pos_plus", "+", class = "btn-primary", style = "padding: 6px 12px; font-weight: bold; height: 34px; margin-top: 0;"),
                                      uiOutput("sp_numbering_label")
                                  )
                           )
