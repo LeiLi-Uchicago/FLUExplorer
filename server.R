@@ -138,6 +138,80 @@ server <- function(input, output, session) {
     }
     updateSelectInput(session, "sp_group_by", choices = final_choices, selected = current_sel)
   })
+
+  add_year_month_filter_column <- function(data) {
+    if (is.null(data) || !is.data.frame(data)) return(data)
+
+    year_chr <- if ("Year" %in% colnames(data)) trimws(as.character(data$Year)) else rep(NA_character_, nrow(data))
+    month_chr <- if ("Month" %in% colnames(data)) trimws(as.character(data$Month)) else rep(NA_character_, nrow(data))
+    month_chr <- ifelse(grepl("^[0-9]+$", month_chr), stringr::str_pad(month_chr, width = 2, side = "left", pad = "0"), month_chr)
+
+    data$Year_Month_Filter <- dplyr::case_when(
+      year_chr %in% c("", "NA") | month_chr %in% c("", "NA") ~ NA_character_,
+      year_chr %in% c("Unknown", "unassigned", "Unassigned") ~ year_chr,
+      month_chr %in% c("Unknown", "unassigned", "Unassigned") ~ month_chr,
+      TRUE ~ paste0(year_chr, "-", month_chr)
+    )
+
+    data
+  }
+
+  sp_year_month_choices <- reactive({
+    req(input$global_subtype, input$variation_type, input$sp_gene, input$sp_group_by, input$sp_position)
+
+    rds_file <- paste0(
+      "data/", input$global_subtype, "/", input$variation_type, "/", input$sp_gene, "/",
+      tolower(input$variation_type), "_usage_by_", input$sp_group_by, ".rds"
+    )
+    data <- get_lazy_table(rds_file)
+
+    if (is.null(data) || !all(c("Year", "Month") %in% colnames(data))) return(character(0))
+
+    data <- add_year_month_filter_column(data)
+
+    ym_values <- data %>%
+      filter(Group == input$global_subtype, Gene == input$sp_gene, Position == input$sp_position) %>%
+      pull(Year_Month_Filter) %>%
+      unique() %>%
+      stats::na.omit() %>%
+      as.character()
+
+    special_values <- c("Unknown", "unassigned", "Unassigned")
+    present_specials <- intersect(special_values, ym_values)
+    chronological_yms <- sort(setdiff(ym_values, special_values))
+    c(present_specials, chronological_yms)
+  })
+
+  output$sp_year_month_range_ui <- renderUI({
+    ym_values <- sp_year_month_choices()
+
+    if (length(ym_values) == 0) {
+      return(
+        helpText("Time range slider is unavailable for this grouping.")
+      )
+    }
+
+    current_sel <- input$sp_year_month_range
+    selected_vals <- if (
+      !is.null(current_sel) &&
+      length(current_sel) == 2 &&
+      all(current_sel %in% ym_values)
+    ) {
+      current_sel
+    } else {
+      c(ym_values[1], ym_values[length(ym_values)])
+    }
+
+    sliderTextInput(
+      inputId = "sp_year_month_range",
+      label = "Filter Year-Month:",
+      choices = ym_values,
+      selected = selected_vals,
+      grid = FALSE,
+      dragRange = TRUE,
+      width = "100%"
+    )
+  })
   
   # --- HELPER: Update Gene Dropdowns based on Subtype ---
   observeEvent(available_genes(), {
@@ -569,7 +643,7 @@ server <- function(input, output, session) {
 
   # This observer triggers when any relevant input changes. It performs the heavy
   # calculation and shows a full-screen waiter while doing so.
-  observeEvent(list(input$global_subtype, input$sp_gene, input$sp_position, input$sp_group_by, input$variation_type, input$sp_min_seqs, input$sp_hide_empty_years), {
+  observeEvent(list(input$global_subtype, input$sp_gene, input$sp_position, input$sp_group_by, input$variation_type, input$sp_min_seqs, input$sp_hide_empty_years, input$sp_year_month_range), {
     subtype   <- input$global_subtype
     gene      <- input$sp_gene
     pos       <- input$sp_position
@@ -596,6 +670,8 @@ server <- function(input, output, session) {
     # Handle cases where data is missing or inconsistent
     if (is.null(data)) { sp_data_val(paste("Table not found for group:", group_col)); return() }
     if (!(group_col %in% colnames(data))) { sp_data_val("Updating data..."); return() }
+
+    data <- add_year_month_filter_column(data)
     
     # We always keep Group, Gene, Position, and the primary grouping column
     group_cols <- c("Group", "Gene", "Position", group_col)
@@ -603,6 +679,18 @@ server <- function(input, output, session) {
     # 1. Basic filtering by gene, position, subtype
     filtered <- data %>% 
       filter(Group == subtype, Gene == gene, Position == pos) %>%
+      {
+        selected_range <- input$sp_year_month_range
+        ym_values <- sp_year_month_choices()
+
+        if (!is.null(selected_range) && length(selected_range) == 2 && all(selected_range %in% ym_values)) {
+          selected_idx <- match(selected_range, ym_values)
+          allowed_yms <- ym_values[seq(min(selected_idx), max(selected_idx))]
+          dplyr::filter(., Year_Month_Filter %in% allowed_yms)
+        } else {
+          .
+        }
+      } %>%
       # 2. Filter out "X" and "-"
       filter(!(AminoAcid %in% c("X", "-"))) %>%
       # NEW Step: Aggregate Counts by the grouping column and AminoAcid

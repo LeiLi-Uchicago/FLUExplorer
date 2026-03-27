@@ -299,6 +299,7 @@ ui <- navbarPage(
                  column(3,
                         h5("Setting", style="font-weight: bold; color: #2980b9;"),
                         selectInput("sp_group_by", "Group by:", choices = NULL),
+                        uiOutput("sp_year_month_range_ui"),
                         checkboxInput("sp_hide_empty_years", "Hide years without records (when Group by Year)", value = TRUE),
                         checkboxInput("sp_show_counts", "Show raw counts instead of percentage", value = FALSE)
                  ),
