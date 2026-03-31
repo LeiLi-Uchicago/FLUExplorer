@@ -1143,10 +1143,19 @@ server <- function(input, output, session) {
   # SERVER: TAB 2 - PAIRWISE COMPARISON 
   # ==========================================
   
-  clicked_data_val <- reactiveValues(gene = NULL, pos = NULL)
+  clicked_data_val <- reactiveValues(gene = NULL, pos = NULL, ready = FALSE, plot_id = NULL, table_id = NULL)
   
   # This reactiveVal will hold the data for the Pairwise Comparison table.
-  pw_diff_val <- reactiveVal(data.frame())
+  pw_diff_val <- reactiveVal(NULL)
+
+  observeEvent(list(input$global_subtype, input$variation_type, input$pw_group_by), {
+    pw_diff_val(NULL)
+    clicked_data_val$gene <- NULL
+    clicked_data_val$pos <- NULL
+    clicked_data_val$ready <- FALSE
+    clicked_data_val$plot_id <- NULL
+    clicked_data_val$table_id <- NULL
+  }, ignoreInit = TRUE)
 
   # This observer runs the heavy comparison only after both groups are chosen.
   # Changing "Group by" is handled separately above to just refresh the dropdown options.
@@ -1160,7 +1169,7 @@ server <- function(input, output, session) {
     req(input$global_subtype, input$variation_type, input$pw_group_by)
     
     if (is.null(input$pw_clade1) || is.null(input$pw_clade2) || input$pw_clade1 == "" || input$pw_clade2 == "") {
-      pw_diff_val(data.frame(Message = "Please select both a Reference and Target group to begin comparison."))
+      pw_diff_val(NULL)
       return()
     }
     
@@ -1205,6 +1214,10 @@ server <- function(input, output, session) {
   
   output$pw_diff_table <- renderDT({
     data <- pairwise_differences()
+
+    if (is.null(data)) {
+      return(datatable(data.frame(Message = "Please select both Group 1 and Group 2 to begin comparison."), rownames = FALSE, options = list(dom = 't')))
+    }
     
     # If the dataframe has a 'Message' column, it's an error/info message from the observer
     if ("Message" %in% colnames(data)) {
@@ -1223,25 +1236,42 @@ server <- function(input, output, session) {
   
   observeEvent(input$modal_clicked, {
     parts <- strsplit(input$modal_clicked, "\\|")[[1]]
-    clicked_data_val$gene <- parts[1]
-    clicked_data_val$pos <- as.numeric(parts[2])
+    next_gene <- parts[1]
+    next_pos <- as.numeric(parts[2])
+    modal_token <- paste0(format(Sys.time(), "%Y%m%d%H%M%OS6"), "_", sample.int(1000000, 1))
+    next_plot_id <- paste0("modal_plot_", modal_token)
+    next_table_id <- paste0("modal_table_", modal_token)
+    
+    clicked_data_val$gene <- NULL
+    clicked_data_val$pos <- NULL
+    clicked_data_val$ready <- FALSE
+    clicked_data_val$plot_id <- NULL
+    clicked_data_val$table_id <- NULL
     
     showModal(modalDialog(
-      title = paste(variant_label(), "Usage: Gene", clicked_data_val$gene, "- Position", clicked_data_val$pos),
+      title = paste(variant_label(), "Usage: Gene", next_gene, "- Position", next_pos),
       size = "l", easyClose = TRUE,
       fluidRow(
         column(4, sliderInput("modal_font_size", "Plot Font Size:", min = 10, max = 24, value = 14, step = 1)),
         column(4, radioButtons("modal_plot_format", "Format:", choices = c("PDF", "PNG"), inline = TRUE)),
         column(4, downloadButton("downloadModalPlot", "Download Plot", class = "btn-info", style="margin-top: 25px; width: 100%;"))
       ),
-      plotlyOutput("modal_plot", height = "500px"), 
+      plotlyOutput(next_plot_id, height = "500px"), 
       hr(), 
-      DTOutput("modal_table")
+      DTOutput(next_table_id)
     ))
+    
+    session$onFlushed(function() {
+      clicked_data_val$gene <- next_gene
+      clicked_data_val$pos <- next_pos
+      clicked_data_val$plot_id <- next_plot_id
+      clicked_data_val$table_id <- next_table_id
+      clicked_data_val$ready <- TRUE
+    }, once = TRUE)
   })
   
   modal_data <- reactive({ 
-    req(clicked_data_val$gene, clicked_data_val$pos)
+    req(isTRUE(clicked_data_val$ready), clicked_data_val$gene, clicked_data_val$pos)
     
     # Capture variation type once
     is_aa <- (input$variation_type == "AA")
@@ -1285,7 +1315,7 @@ server <- function(input, output, session) {
   library(ggtext) 
   
   modal_plot_ggplot <- reactive({
-    req(input$modal_font_size, input$pw_clade1, input$pw_clade2)
+    req(isTRUE(clicked_data_val$ready), input$modal_font_size, input$pw_clade1, input$pw_clade2)
     data <- modal_data()
     validate(need(nrow(data) > 0, "No data available."))
     
@@ -1367,9 +1397,19 @@ server <- function(input, output, session) {
       )
   })
   
-  output$modal_plot <- renderPlotly({
-    ggplotly(modal_plot_ggplot(), tooltip = "text") %>%
-      config(displayModeBar = FALSE)
+  observe({
+    req(clicked_data_val$plot_id)
+    local({
+      plot_id <- clicked_data_val$plot_id
+      output[[plot_id]] <- renderPlotly({
+        if (!isTRUE(clicked_data_val$ready) || !identical(clicked_data_val$plot_id, plot_id)) {
+          return(plotly_empty() %>% layout(xaxis = list(visible = FALSE), yaxis = list(visible = FALSE)))
+        }
+        
+        ggplotly(modal_plot_ggplot(), tooltip = "text") %>%
+          config(displayModeBar = FALSE)
+      })
+    })
   })
   
   output$downloadModalPlot <- downloadHandler(
@@ -1383,17 +1423,27 @@ server <- function(input, output, session) {
     }
   )
   
-  output$modal_table <- renderDT({ 
-    data <- modal_data()
-    cols_to_show <- c("Clade", "AminoAcid", "Count", "Total_in_Clade", "Frequency(%)")
-    if("Codon_Usage" %in% colnames(data)) cols_to_show <- c(cols_to_show, "Codon_Usage")
-    
-    display_data <- data %>%
-      dplyr::select(all_of(cols_to_show)) %>%
-      arrange(Clade, desc(`Frequency(%)`)) %>%
-      dplyr::rename(`Group` = Clade)
-    
-    datatable(display_data, options = list(pageLength = 5, autoWidth = TRUE), rownames = FALSE) %>% formatRound("Frequency(%)", digits = 2) 
+  observe({
+    req(clicked_data_val$table_id)
+    local({
+      table_id <- clicked_data_val$table_id
+      output[[table_id]] <- renderDT({
+        if (!isTRUE(clicked_data_val$ready) || !identical(clicked_data_val$table_id, table_id)) {
+          return(datatable(data.frame(Message = "Loading selected position..."), rownames = FALSE, options = list(dom = 't')))
+        }
+        
+        data <- modal_data()
+        cols_to_show <- c("Clade", "AminoAcid", "Count", "Total_in_Clade", "Frequency(%)")
+        if("Codon_Usage" %in% colnames(data)) cols_to_show <- c(cols_to_show, "Codon_Usage")
+        
+        display_data <- data %>%
+          dplyr::select(all_of(cols_to_show)) %>%
+          arrange(Clade, desc(`Frequency(%)`)) %>%
+          dplyr::rename(`Group` = Clade)
+        
+        datatable(display_data, options = list(pageLength = 5, autoWidth = TRUE), rownames = FALSE) %>% formatRound("Frequency(%)", digits = 2) 
+      })
+    })
   })
   
   output$downloadPairwiseCSV <- downloadHandler(
