@@ -284,27 +284,153 @@ server <- function(input, output, session) {
     # updateSelectInput(session, "heat_group_by", choices = final_choices, selected = current_sel)
   })
 
-  pairwise_usage_data <- reactive({
-    req(input$global_subtype, input$variation_type, input$pw_group_by)
-    var_lower <- tolower(input$variation_type)
-    
-    genes <- available_genes()
-    all_dfs <- lapply(genes, function(g) {
-      rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", g, "/", var_lower, "_usage_by_", input$pw_group_by, ".rds")
-      get_lazy_table(rds_file)
-    })
-    
-    df <- bind_rows(all_dfs)
-    if (nrow(df) > 0) {
-      if (input$pw_group_by %in% colnames(df)) {
-        df <- df %>% dplyr::rename(Clade = !!sym(input$pw_group_by))
-      } else if (!"Clade" %in% colnames(df)) {
-        df$Clade <- "Unknown"
-      }
-      return(df)
+  empty_pairwise_usage_df <- function() {
+    data.frame(
+      Group = character(),
+      Gene = character(),
+      Clade = character(),
+      Position = numeric(),
+      AminoAcid = character(),
+      Count = numeric(),
+      stringsAsFactors = FALSE
+    )
+  }
+
+  empty_pairwise_position_df <- function(include_codon = TRUE) {
+    out <- data.frame(
+      Clade = character(),
+      AminoAcid = character(),
+      Count = numeric(),
+      Total_in_Clade = numeric(),
+      `Frequency(%)` = numeric(),
+      stringsAsFactors = FALSE,
+      check.names = FALSE
+    )
+
+    if (include_codon) out$Codon_Usage <- character()
+    out
+  }
+
+  get_pairwise_rds_file <- function(gene, group_by = input$pw_group_by) {
+    paste0(
+      "data/", input$global_subtype, "/", input$variation_type, "/", gene, "/",
+      tolower(input$variation_type), "_usage_by_", group_by, ".rds"
+    )
+  }
+
+  load_pairwise_gene_data <- function(gene, group_by = input$pw_group_by) {
+    req(input$global_subtype, input$variation_type, group_by)
+
+    df <- get_lazy_table(get_pairwise_rds_file(gene, group_by), max_tables = 2, max_mem_mb = 450)
+    if (is.null(df)) return(empty_pairwise_usage_df())
+
+    if (group_by %in% colnames(df)) {
+      df <- df %>% dplyr::rename(Clade = !!sym(group_by))
+    } else if (!"Clade" %in% colnames(df)) {
+      df$Clade <- "Unknown"
     }
-    return(data.frame(Group=character(), Gene=character(), Clade=character(), Position=numeric(), AminoAcid=character(), Count=numeric()))
-  })
+
+    df %>%
+      filter(Group == input$global_subtype, Gene == gene)
+  }
+
+  get_dominant_variants_for_clade <- function(gene_data, clade_name, min_freq) {
+    gene_data %>%
+      filter(Clade == clade_name) %>%
+      filter(!(AminoAcid %in% c("X", "-"))) %>%
+      group_by(Gene, Position, AminoAcid) %>%
+      summarise(Variant_Count = sum(Count, na.rm = TRUE), .groups = "drop_last") %>%
+      mutate(
+        Total_Seqs = sum(Variant_Count),
+        Freq = (Variant_Count / Total_Seqs) * 100
+      ) %>%
+      filter(Freq == max(Freq)) %>%
+      filter(row_number() == 1, Freq >= min_freq) %>%
+      ungroup()
+  }
+
+  get_pairwise_position_distribution <- function(gene, position, group_by = input$pw_group_by) {
+    req(position)
+
+    res <- load_pairwise_gene_data(gene, group_by) %>%
+      filter(Position == position) %>%
+      filter(!(AminoAcid %in% c("X", "-")))
+
+    if (nrow(res) == 0) return(empty_pairwise_position_df(include_codon = "Codon_Usage" %in% colnames(res)))
+
+    has_codon <- "Codon_Usage" %in% colnames(res)
+
+    res <- res %>%
+      group_by(Clade, AminoAcid) %>%
+      summarise(
+        Count = sum(Count, na.rm = TRUE),
+        Codon_Usage = if (has_codon) dplyr::first(Codon_Usage) else NA_character_,
+        .groups = "drop_last"
+      ) %>%
+      mutate(Total_in_Clade = sum(Count)) %>%
+      mutate(`Frequency(%)` = (Count / Total_in_Clade) * 100) %>%
+      ungroup()
+
+    if (group_by == "Year" && isTRUE(input$pw_hide_empty_years)) {
+      res <- res %>% filter(Total_in_Clade > 0)
+    }
+
+    res
+  }
+
+  compute_pairwise_differences <- function(clade1, clade2, min_freq) {
+    genes <- available_genes()
+    diff_list <- vector("list", length(genes))
+    diff_idx <- 0
+
+    message("Pairwise comparison started. Memory before loop: ", round(sum(gc(verbose = FALSE)[, 2]), 1), " MB")
+
+    for (gene in genes) {
+      gene_data <- load_pairwise_gene_data(gene) %>%
+        filter(Clade %in% c(clade1, clade2))
+
+      if (nrow(gene_data) == 0) {
+        rm(gene_data)
+        gc(FALSE)
+        next
+      }
+
+      c1_dom <- get_dominant_variants_for_clade(gene_data, clade1, min_freq) %>%
+        dplyr::select(Gene, Position, Clade1_AA = AminoAcid, Clade1_Freq = Freq)
+
+      c2_dom <- get_dominant_variants_for_clade(gene_data, clade2, min_freq) %>%
+        dplyr::select(Gene, Position, Clade2_AA = AminoAcid, Clade2_Freq = Freq)
+
+      gene_diffs <- inner_join(c1_dom, c2_dom, by = c("Gene", "Position")) %>%
+        filter(Clade1_AA != Clade2_AA)
+
+      if (nrow(gene_diffs) > 0) {
+        diff_idx <- diff_idx + 1
+        diff_list[[diff_idx]] <- gene_diffs
+      }
+
+      rm(gene_data, c1_dom, c2_dom, gene_diffs)
+      gc(FALSE)
+    }
+
+    out <- if (diff_idx == 0) {
+      data.frame(
+        Gene = character(),
+        Position = numeric(),
+        Clade1_AA = character(),
+        Clade1_Freq = numeric(),
+        Clade2_AA = character(),
+        Clade2_Freq = numeric(),
+        stringsAsFactors = FALSE
+      )
+    } else {
+      bind_rows(diff_list[seq_len(diff_idx)]) %>%
+        arrange(Gene, Position)
+    }
+
+    message("Pairwise comparison finished. Memory after loop: ", round(sum(gc(verbose = FALSE)[, 2]), 1), " MB")
+    out
+  }
 
   ent_usage_data <- reactive({
     req(input$global_subtype, input$variation_type, input$ent_group_by, input$ent_gene)
@@ -1019,24 +1145,6 @@ server <- function(input, output, session) {
   
   clicked_data_val <- reactiveValues(gene = NULL, pos = NULL)
   
-  get_aggregated_clade <- function(subtype, clade_name, min_freq) {
-    pairwise_usage_data() %>% 
-      filter(Group == subtype, Clade == clade_name) %>% 
-      # NEW: Exclude unknowns and gaps before any aggregation
-      filter(!(AminoAcid %in% c("X", "-"))) %>% 
-      group_by(Gene, Position, AminoAcid) %>%
-      summarise(Variant_Count = sum(Count, na.rm = TRUE), .groups = "drop_last") %>%
-      # Recalculate totals and frequencies based ONLY on valid sequences
-      mutate(
-        Total_Seqs = sum(Variant_Count),
-        Freq = (Variant_Count / Total_Seqs) * 100
-      ) %>%
-      # Select the dominant valid amino acid
-      filter(Freq == max(Freq)) %>%
-      filter(row_number() == 1, Freq >= min_freq) %>%
-      ungroup()
-  }
-  
   # This reactiveVal will hold the data for the Pairwise Comparison table.
   pw_diff_val <- reactiveVal(data.frame())
 
@@ -1085,17 +1193,8 @@ server <- function(input, output, session) {
     )
     on.exit(waiter_hide(), add = TRUE)
     
-    c1_dom <- get_aggregated_clade(input$global_subtype, input$pw_clade1, input$pw_min_freq) %>%
-      dplyr::select(Gene, Position, Clade1_AA = AminoAcid, Clade1_Freq = Freq)
-    
-    c2_dom <- get_aggregated_clade(input$global_subtype, input$pw_clade2, input$pw_min_freq) %>%
-      dplyr::select(Gene, Position, Clade2_AA = AminoAcid, Clade2_Freq = Freq)
-    
-    diffs <- inner_join(c1_dom, c2_dom, by = c("Gene", "Position")) %>% 
-      filter(Clade1_AA != Clade2_AA) %>% 
-      arrange(Gene, Position)
-
-    pw_diff_val(diffs)
+    pw_diff_val(compute_pairwise_differences(input$pw_clade1, input$pw_clade2, input$pw_min_freq))
+    gc(FALSE)
 
   }, ignoreNULL = TRUE, ignoreInit = TRUE)
 
@@ -1147,33 +1246,12 @@ server <- function(input, output, session) {
     # Capture variation type once
     is_aa <- (input$variation_type == "AA")
     
-    res <- pairwise_usage_data() %>% 
-      filter(Group == input$global_subtype, Gene == clicked_data_val$gene, Position == clicked_data_val$pos) %>%
-      # NEW: Remove "X" and "-" before any calculations
-      filter(!(AminoAcid %in% c("X", "-")))
-      
+    res <- get_pairwise_position_distribution(clicked_data_val$gene, clicked_data_val$pos)
+
     if (nrow(res) == 0) return(res)
-    
-    # Check if Codon_Usage column exists before pipe to avoid dot-reference issues
-    has_codon <- "Codon_Usage" %in% colnames(res)
-    
-    res <- res %>%
-      group_by(Clade, AminoAcid) %>%
-      summarise(
-        Count = sum(Count, na.rm = TRUE), 
-        Codon_Usage = if(has_codon) dplyr::first(Codon_Usage) else NA_character_,
-        .groups = "drop_last"
-      ) %>%
-      # Recalculate the denominator based ONLY on valid amino acids
-      mutate(Total_in_Clade = sum(Count)) %>%
-      mutate(`Frequency(%)` = (Count / Total_in_Clade) * 100) %>%
-      ungroup()
-      
-    if (input$pw_group_by == "Year" && isTRUE(input$pw_hide_empty_years)) {
-      res <- res %>% filter(Total_in_Clade > 0)
-    }
-      
+
     group_col <- input$pw_group_by
+    has_codon <- "Codon_Usage" %in% colnames(res)
     
     # Pre-calculate a clean tooltip text to avoid complex logic inside aes()
     res <- res %>%
@@ -1335,17 +1413,23 @@ server <- function(input, output, session) {
         addWorksheet(wb, "No Differences"); writeData(wb, "No Differences", "No differences found."); saveWorkbook(wb, file, overwrite = TRUE); return() 
       }
       base_df <- data.frame(AminoAcid = if(input$variation_type == "AA") ALL_AAS else c("a","c","g","t","A","C","G","T","N","n","-"))
+      current_gene <- NULL
+      current_gene_data <- NULL
+
       for(i in 1:nrow(diffs)) {
         r_gene <- diffs$Gene[i]; r_pos <- diffs$Position[i]
-        
-        pos_data <- pairwise_usage_data() %>% 
-          filter(Group == input$global_subtype, Gene == r_gene, Position == r_pos) %>%
-          # Step 1: Remove "X" and "-" before any calculations
+
+        if (!identical(current_gene, r_gene)) {
+          current_gene <- r_gene
+          current_gene_data <- load_pairwise_gene_data(r_gene)
+        }
+
+        pos_data <- current_gene_data %>%
+          filter(Position == r_pos) %>%
           filter(!(AminoAcid %in% c("X", "-"))) %>%
-          group_by(Clade, AminoAcid) %>% 
+          group_by(Clade, AminoAcid) %>%
           summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop_last") %>%
-          # Step 2: Recalculate Frequency based only on the sum of valid amino acids per Clade
-          mutate(`Frequency(%)` = (Count / sum(Count)) * 100) %>% 
+          mutate(`Frequency(%)` = (Count / sum(Count)) * 100) %>%
           ungroup()
         
         sorted_clades <- sort(unique(pos_data$Clade))
@@ -1366,6 +1450,9 @@ server <- function(input, output, session) {
         highlight_cols <- which(colnames(pct_matrix) %in% c(input$pw_clade1, input$pw_clade2))
         if(length(highlight_cols) > 0) addStyle(wb, sheet_name, style = createStyle(fontColour = "#FF0000", textDecoration = "bold"), rows = c(2, start_count_row + 1), cols = highlight_cols, gridExpand = TRUE)
       }
+
+      rm(current_gene, current_gene_data)
+      gc(FALSE)
       saveWorkbook(wb, file, overwrite = TRUE)
     }
   )

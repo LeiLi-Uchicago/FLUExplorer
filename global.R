@@ -330,7 +330,10 @@ lazy_cache <- new.env(parent = emptyenv())
 lazy_cache$keys <- character(0)
 lazy_cache$data <- list()
 
-get_lazy_table <- function(rds_path, max_tables = 3, max_mem_mb = 600) {
+LAZY_CACHE_MAX_TABLES <- 2
+LAZY_CACHE_MAX_MEM_MB <- 450
+
+get_lazy_table <- function(rds_path, max_tables = LAZY_CACHE_MAX_TABLES, max_mem_mb = LAZY_CACHE_MAX_MEM_MB) {
   if (!file.exists(rds_path)) return(NULL)
   
   if (rds_path %in% lazy_cache$keys) {
