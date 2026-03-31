@@ -1040,17 +1040,16 @@ server <- function(input, output, session) {
   # This reactiveVal will hold the data for the Pairwise Comparison table.
   pw_diff_val <- reactiveVal(data.frame())
 
-  # This observer triggers when any relevant input changes. It performs the heavy
-  # calculation and shows a full-screen waiter while doing so.
+  # This observer runs the heavy comparison only after both groups are chosen.
+  # Changing "Group by" is handled separately above to just refresh the dropdown options.
   observeEvent(list(
-    input$global_subtype, input$variation_type, input$pw_group_by, 
     input$pw_clade1, input$pw_clade2, input$pw_min_freq,
     session$clientData$output_pw_diff_table_hidden
   ), {
     # Prevent execution if the Pairwise Comparison tab is not currently visible
     if (!isFALSE(session$clientData$output_pw_diff_table_hidden)) return()
     
-    req(input$global_subtype)
+    req(input$global_subtype, input$variation_type, input$pw_group_by)
     
     if (is.null(input$pw_clade1) || is.null(input$pw_clade2) || input$pw_clade1 == "" || input$pw_clade2 == "") {
       pw_diff_val(data.frame(Message = "Please select both a Reference and Target group to begin comparison."))
@@ -1311,8 +1310,10 @@ server <- function(input, output, session) {
     cols_to_show <- c("Clade", "AminoAcid", "Count", "Total_in_Clade", "Frequency(%)")
     if("Codon_Usage" %in% colnames(data)) cols_to_show <- c(cols_to_show, "Codon_Usage")
     
-    display_data <- data %>% dplyr::select(all_of(cols_to_show)) %>% arrange(Clade, desc(`Frequency(%)`)) %>% 
-      dplyr::rename(!!sym(input$pw_group_by) := Clade)
+    display_data <- data %>%
+      dplyr::select(all_of(cols_to_show)) %>%
+      arrange(Clade, desc(`Frequency(%)`)) %>%
+      dplyr::rename(`Group` = Clade)
     
     datatable(display_data, options = list(pageLength = 5, autoWidth = TRUE), rownames = FALSE) %>% formatRound("Frequency(%)", digits = 2) 
   })
