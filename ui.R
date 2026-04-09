@@ -94,6 +94,36 @@ ui <- navbarPage(
       .variation-switch-container .form-group {
         margin-bottom: 0 !important;
       }
+      .info-markdown table {
+        width: 100%;
+        margin: 1.25rem 0;
+        border-collapse: separate;
+        border-spacing: 0;
+        border: 1px solid #dfe6e9;
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      .info-markdown thead th {
+        background-color: #f4f7f9;
+        color: #2c3e50;
+        font-weight: 700;
+        text-align: left;
+        padding: 14px 20px;
+        border-bottom: 2px solid #dfe6e9;
+        white-space: nowrap;
+      }
+      .info-markdown tbody td {
+        padding: 12px 20px;
+        border-bottom: 1px solid #ecf0f1;
+        vertical-align: top;
+      }
+      .info-markdown tbody tr:last-child td {
+        border-bottom: none;
+      }
+      .info-markdown th + th,
+      .info-markdown td + td {
+        border-left: 1px solid #ecf0f1;
+      }
     ")),
     # Fixed positioned container for the switch
     div(class = "variation-switch-container",
@@ -105,8 +135,8 @@ ui <- navbarPage(
           selected = metadata_groups[1],
           width = "120px"
         ),
-        div(style = "width: 1px; height: 25px; background: #ced4da;"),
-        div(class = "btn-group-container-sw",
+        div(style = "width: 1px; height: 25px; background: #ced4da;display:None"),
+        div(class = "btn-group-container-sw", style = "display:None",
             span(class = "switch-label", "Mode"),
             radioGroupButtons(
               inputId = "variation_type",
@@ -388,6 +418,18 @@ ui <- navbarPage(
                       p("Click on any highlighted Position to view the full amino acid distribution for that specific site."),
                       DTOutput("pw_diff_table")
                )
+             )
+           )
+  ),
+  # ---------------------------------------------------------
+  # TAB 3: METHODS / INFO / UPDATE LOG
+  # ---------------------------------------------------------
+  tabPanel("Methods & Info",
+           fluidPage(
+             div(
+               class = "info-markdown",
+               style = "max-width: 960px; margin: 24px auto; padding: 24px 28px; background-color: #ffffff; border: 1px solid #dfe6e9; border-radius: 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.06);",
+               includeMarkdown("APP_INFO.md")
              )
            )
   )
