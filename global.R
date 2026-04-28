@@ -17,6 +17,11 @@ library(tidyverse)
 library(shinyWidgets)
 library(shinyjs)
 
+USE_DUCKDB <- requireNamespace("duckdb", quietly = TRUE) && requireNamespace("DBI", quietly = TRUE)
+if (!USE_DUCKDB) {
+  message("Package 'duckdb' is not installed. Falling back to legacy RDS lazy loading.")
+}
+
 # Disable scientific notation for the session
 options(scipen = 999)
 
@@ -25,6 +30,178 @@ options(scipen = 999)
 # ==========================================
 # Version 11: Read important_positions.csv
 RDS_CACHE <- "data/app_cache_flu.rds"
+DUCKDB_CACHE <- "data/flu_explorer.duckdb"
+DUCKDB_META_CACHE <- "data/flu_explorer_duckdb_meta.rds"
+
+normalize_year_month_filter <- function(year, month) {
+  year_chr <- trimws(as.character(year))
+  month_chr <- trimws(as.character(month))
+  month_chr <- ifelse(grepl("^[0-9]+$", month_chr), stringr::str_pad(month_chr, width = 2, side = "left", pad = "0"), month_chr)
+
+  dplyr::case_when(
+    year_chr %in% c("", "NA") | month_chr %in% c("", "NA") ~ NA_character_,
+    year_chr %in% c("Unknown", "unassigned", "Unassigned") ~ year_chr,
+    month_chr %in% c("Unknown", "unassigned", "Unassigned") ~ month_chr,
+    TRUE ~ paste0(year_chr, "-", month_chr)
+  )
+}
+
+empty_usage_duckdb_df <- function() {
+  data.frame(
+    Group = character(),
+    Variation_Type = character(),
+    Gene = character(),
+    Grouping_Type = character(),
+    Clade = character(),
+    Position = numeric(),
+    AminoAcid = character(),
+    Count = numeric(),
+    Year = character(),
+    Month = character(),
+    Year_Month = character(),
+    Year_Month_Filter = character(),
+    Codon_Usage = character(),
+    stringsAsFactors = FALSE
+  )
+}
+
+normalize_usage_table <- function(df, subtype, var_type, gene_name, group_name) {
+  df <- df %>%
+    dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
+    mutate(Group = subtype)
+
+  if (var_type == "NT") {
+    df <- df %>%
+      dplyr::rename_with(~ gsub("^Nucleotide$", "AminoAcid", .x), any_of("Nucleotide"))
+  }
+
+  if (!"Gene" %in% names(df)) df$Gene <- gene_name
+  if (!"AminoAcid" %in% names(df)) df$AminoAcid <- NA_character_
+  if (!"Count" %in% names(df)) df$Count <- NA_real_
+  if (!"Position" %in% names(df)) df$Position <- NA_real_
+  if (!"Year" %in% names(df)) df$Year <- NA_character_
+  if (!"Month" %in% names(df)) df$Month <- NA_character_
+  if (!"Year_Month" %in% names(df)) {
+    if (group_name == "Year_Month") {
+      df$Year_Month <- normalize_year_month_filter(df$Year, df$Month)
+    } else {
+      df$Year_Month <- NA_character_
+    }
+  }
+  if (!group_name %in% names(df)) df[[group_name]] <- "Unknown"
+  if (group_name == "Year_Month") df[[group_name]] <- normalize_year_month_filter(df$Year, df$Month)
+  if (!"Codon_Usage" %in% names(df)) df$Codon_Usage <- NA_character_
+
+  data.frame(
+    Group = as.character(df$Group),
+    Variation_Type = as.character(var_type),
+    Gene = as.character(df$Gene),
+    Grouping_Type = as.character(group_name),
+    Clade = as.character(df[[group_name]]),
+    Position = suppressWarnings(as.numeric(df$Position)),
+    AminoAcid = as.character(df$AminoAcid),
+    Count = suppressWarnings(as.numeric(df$Count)),
+    Year = as.character(df$Year),
+    Month = as.character(df$Month),
+    Year_Month = as.character(df$Year_Month),
+    Year_Month_Filter = normalize_year_month_filter(df$Year, df$Month),
+    Codon_Usage = as.character(df$Codon_Usage),
+    stringsAsFactors = FALSE
+  )
+}
+
+build_usage_duckdb_cache <- function(subtypes = SUBTYPES, db_path = DUCKDB_CACHE) {
+  if (!USE_DUCKDB) return(FALSE)
+
+  tmp_path <- paste0(db_path, ".tmp")
+  if (file.exists(tmp_path)) unlink(tmp_path)
+
+  con <- DBI::dbConnect(duckdb::duckdb(), dbdir = tmp_path, read_only = FALSE)
+  on.exit({
+    try(DBI::dbDisconnect(con, shutdown = TRUE), silent = TRUE)
+  }, add = TRUE)
+
+  DBI::dbExecute(con, "PRAGMA memory_limit='700MB'")
+  DBI::dbWriteTable(con, "usage", empty_usage_duckdb_df(), overwrite = TRUE)
+
+  usage_groups <- character()
+
+  for (subtype in subtypes) {
+    message("Processing usage tables into DuckDB for ", subtype)
+
+    for (var_type in c("AA", "NT")) {
+      var_root <- paste0("data/", subtype, "/", var_type, "/")
+      if (!dir.exists(var_root)) next
+
+      gene_dirs <- list.dirs(var_root, full.names = TRUE, recursive = FALSE)
+      for (g_dir in gene_dirs) {
+        gene_name <- basename(g_dir)
+        message("  Processing ", var_type, " / ", gene_name)
+
+        prefix <- if (var_type == "AA") "aa" else "nt"
+        pattern <- paste0("^", prefix, "_usage_by_.*\\.csv$")
+        files <- list.files(g_dir, pattern = pattern, full.names = TRUE)
+
+        for (f in files) {
+          group_name <- sub(paste0("^", prefix, "_usage_by_(.*)\\.csv$"), "\\1", basename(f))
+          usage_groups <- unique(c(usage_groups, group_name))
+
+          df <- read_csv(f, show_col_types = FALSE, na = character()) %>%
+            normalize_usage_table(subtype, var_type, gene_name, group_name)
+
+          DBI::dbWriteTable(con, "usage", df, append = TRUE)
+
+          if (group_name == "Year_Month") {
+            year_df <- df %>%
+              group_by(Group, Variation_Type, Gene, Position, AminoAcid, Year) %>%
+              summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop") %>%
+              mutate(
+                Grouping_Type = "Year",
+                Clade = as.character(Year),
+                Month = NA_character_,
+                Year_Month = NA_character_,
+                Year_Month_Filter = NA_character_,
+                Codon_Usage = NA_character_
+              ) %>%
+              dplyr::select(names(empty_usage_duckdb_df()))
+
+            DBI::dbWriteTable(con, "usage", year_df, append = TRUE)
+            usage_groups <- unique(c(usage_groups, "Year"))
+          }
+
+          rm(df)
+          gc(FALSE)
+        }
+      }
+    }
+  }
+
+  if (identical(tolower(Sys.getenv("FLUEXPLORER_DUCKDB_CREATE_INDEXES", "false")), "true")) {
+    DBI::dbExecute(con, "CREATE INDEX idx_usage_main ON usage (\"Group\", Variation_Type, Gene, Grouping_Type, Position)")
+    DBI::dbExecute(con, "CREATE INDEX idx_usage_clade ON usage (\"Group\", Variation_Type, Gene, Grouping_Type, Clade)")
+    DBI::dbExecute(con, "CREATE INDEX idx_usage_time ON usage (\"Group\", Variation_Type, Gene, Grouping_Type, Position, Year_Month_Filter)")
+  } else {
+    message("Skipping DuckDB index creation. Set FLUEXPLORER_DUCKDB_CREATE_INDEXES=true to enable it during cache builds.")
+  }
+
+  saveRDS(list(usage_groups = usage_groups, built_at = Sys.time()), DUCKDB_META_CACHE)
+  DBI::dbDisconnect(con, shutdown = TRUE)
+
+  if (file.exists(db_path)) unlink(db_path)
+  file.rename(tmp_path, db_path)
+}
+
+ensure_usage_duckdb_cache <- function() {
+  if (!USE_DUCKDB) return(FALSE)
+  if (file.exists(DUCKDB_CACHE)) return(TRUE)
+
+  message("DuckDB cache not found. Building: ", DUCKDB_CACHE)
+  ok <- tryCatch(build_usage_duckdb_cache(), error = function(e) {
+    message("DuckDB cache build failed: ", conditionMessage(e))
+    FALSE
+  })
+  isTRUE(ok) && file.exists(DUCKDB_CACHE)
+}
 
 # Subtypes to load: Dynamically detect valid subtype folders in data/
 possible_dirs <- list.dirs("data", full.names = FALSE, recursive = FALSE)
@@ -66,8 +243,8 @@ if (file.exists(RDS_CACHE)) {
 }
 
 if (!cache_loaded) {
-  # ---- SLOW PATH: process raw CSVs into lazy-load RDS format and build cache ----
-  message("RDS cache not found. Processing raw CSV files into lazy-load RDS format...")
+  # ---- SLOW PATH: process raw CSVs and build cache ----
+  message("RDS cache not found. Processing raw CSV files...")
   
   # --- Metadata ---
   all_metadata <- list()
@@ -137,65 +314,53 @@ if (!cache_loaded) {
   metadata_global <- metadata_global %>% filter(!is.na(Year))
   total_parsed <- scales::comma(nrow(metadata_global))
   
-  # --- Process Usage Tables into individual RDS files ---
-  for (subtype in SUBTYPES) {
-    message("Processing usage tables into RDS for ", subtype)
-    
-    # Process both AA and NT
-    for (var_type in c("AA", "NT")) {
-      var_root <- paste0("data/", subtype, "/", var_type, "/")
-      if (!dir.exists(var_root)) next
-      
-      gene_dirs <- list.dirs(var_root, full.names = TRUE, recursive = FALSE)
-      for (g_dir in gene_dirs) {
-        gene_name <- basename(g_dir)
-        message("  Processing ", var_type, " / ", gene_name)
-        
-        prefix <- if(var_type == "AA") "aa" else "nt"
-        pattern <- paste0("^", prefix, "_usage_by_.*\\.csv$")
-        files <- list.files(g_dir, pattern = pattern, full.names = TRUE)
-        
-        for (f in files) {
-          # Check if we should process Year_Month specially
-          is_ym <- grepl(paste0(prefix, "_usage_by_Year_Month\\.csv$"), f)
-          
-          df <- read_csv(f, show_col_types = FALSE, na = character()) %>%
-            dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
-            mutate(Group = subtype)
-          
-          if (var_type == "NT") {
-            df <- df %>% 
-              dplyr::rename_with(~ gsub("^Nucleotide$", "AminoAcid", .x), any_of("Nucleotide"))
-          }
-          
-          if (is_ym) {
-            # Add Year_Month column for consistency
-            df <- df %>% 
-              mutate(Year_Month = ifelse(Month == "Unknown", as.character(Year), paste0(Year, "-", Month)))
-          }
-          
-          # Save standard RDS
-          rds_path <- sub("\\.csv$", ".rds", f)
-          saveRDS(df, rds_path)
-          
-          # Generate Year version from Year_Month
-          if (is_ym) {
-            message("    Generating Year table from Year_Month for ", gene_name)
-            year_df <- df %>%
-              group_by(Group, Gene, Position, Year, AminoAcid) %>%
-              summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop")
-            
-            # Add Codon_Usage if it exists (might not be simple to aggregate if it's a string)
-            # For now, if it's NT, it doesn't have it. If it's AA, it might.
-            # Usually it's better to just leave it out of the Year table or pick first.
-            if ("Codon_Usage" %in% names(df)) {
-               # We can't easily aggregate strings of codons, maybe just drop it or pick first
-               # but it's position-specific, so if codons changed within a year, it's messy.
-               # Let's just drop it for the Year table for now.
+  # --- Process Usage Tables ---
+  duckdb_ready <- ensure_usage_duckdb_cache()
+  if (!duckdb_ready) {
+    message("DuckDB is unavailable. Processing usage tables into legacy RDS files.")
+
+    for (subtype in SUBTYPES) {
+      message("Processing usage tables into RDS for ", subtype)
+
+      for (var_type in c("AA", "NT")) {
+        var_root <- paste0("data/", subtype, "/", var_type, "/")
+        if (!dir.exists(var_root)) next
+
+        gene_dirs <- list.dirs(var_root, full.names = TRUE, recursive = FALSE)
+        for (g_dir in gene_dirs) {
+          gene_name <- basename(g_dir)
+          message("  Processing ", var_type, " / ", gene_name)
+
+          prefix <- if(var_type == "AA") "aa" else "nt"
+          pattern <- paste0("^", prefix, "_usage_by_.*\\.csv$")
+          files <- list.files(g_dir, pattern = pattern, full.names = TRUE)
+
+          for (f in files) {
+            is_ym <- grepl(paste0(prefix, "_usage_by_Year_Month\\.csv$"), f)
+
+            df <- read_csv(f, show_col_types = FALSE, na = character()) %>%
+              dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
+              mutate(Group = subtype)
+
+            if (var_type == "NT") {
+              df <- df %>%
+                dplyr::rename_with(~ gsub("^Nucleotide$", "AminoAcid", .x), any_of("Nucleotide"))
             }
-            
-            year_rds_path <- file.path(g_dir, paste0(prefix, "_usage_by_Year.rds"))
-            saveRDS(year_df, year_rds_path)
+
+            if (is_ym) {
+              df <- df %>%
+                mutate(Year_Month = normalize_year_month_filter(Year, Month))
+            }
+
+            saveRDS(df, sub("\\.csv$", ".rds", f))
+
+            if (is_ym) {
+              year_df <- df %>%
+                group_by(Group, Gene, Position, Year, AminoAcid) %>%
+                summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop")
+
+              saveRDS(year_df, file.path(g_dir, paste0(prefix, "_usage_by_Year.rds")))
+            }
           }
         }
       }
@@ -260,6 +425,8 @@ if (!cache_loaded) {
   suppressWarnings(rm(all_metadata, metadata_global, meta))
   gc(verbose = FALSE)
 }
+
+duckdb_cache_ready <- ensure_usage_duckdb_cache()
 
 # ==========================================
 # 2. COORDINATE LOOKUP DATA (Pre-calculated for Performance)
@@ -366,4 +533,312 @@ get_lazy_table <- function(rds_path, max_tables = LAZY_CACHE_MAX_TABLES, max_mem
   }
   
   return(df)
+}
+
+# ==========================================
+# 4. DUCKDB QUERY HELPERS
+# ==========================================
+usage_db_env <- new.env(parent = emptyenv())
+usage_db_env$con <- NULL
+
+usage_duckdb_available <- function() {
+  isTRUE(USE_DUCKDB) && isTRUE(duckdb_cache_ready) && file.exists(DUCKDB_CACHE)
+}
+
+usage_db_conn <- function() {
+  if (!usage_duckdb_available()) return(NULL)
+
+  if (is.null(usage_db_env$con) || !DBI::dbIsValid(usage_db_env$con)) {
+    usage_db_env$con <- DBI::dbConnect(duckdb::duckdb(), dbdir = DUCKDB_CACHE, read_only = TRUE)
+    DBI::dbExecute(usage_db_env$con, "PRAGMA memory_limit='700MB'")
+  }
+
+  usage_db_env$con
+}
+
+usage_query <- function(sql, params = NULL) {
+  con <- usage_db_conn()
+  if (is.null(con)) return(NULL)
+  DBI::dbGetQuery(con, sql, params = params)
+}
+
+usage_sql_in_values <- function(values) {
+  con <- usage_db_conn()
+  if (is.null(con) || length(values) == 0) return(NULL)
+  paste(DBI::dbQuoteString(con, values), collapse = ", ")
+}
+
+usage_file_groups <- function(subtype, var_type, gene) {
+  dir_path <- paste0("data/", subtype, "/", var_type, "/", gene, "/")
+  files <- list.files(dir_path, pattern = paste0("^", tolower(var_type), "_usage_by_.*\\.(rds|csv)$"))
+  sort(unique(sub(paste0("^", tolower(var_type), "_usage_by_(.*)\\.(rds|csv)$"), "\\1", files)))
+}
+
+usage_available_groups <- function(subtype, var_type, gene) {
+  if (!usage_duckdb_available()) return(usage_file_groups(subtype, var_type, gene))
+
+  res <- usage_query(
+    "SELECT DISTINCT Grouping_Type FROM usage WHERE \"Group\" = ? AND Variation_Type = ? AND Gene = ?",
+    list(subtype, var_type, gene)
+  )
+  groups <- sort(as.character(res$Grouping_Type))
+
+  if (length(groups) == 0) usage_file_groups(subtype, var_type, gene) else groups
+}
+
+usage_distinct_group_values <- function(subtype, var_type, gene, group_by) {
+  res <- usage_query(
+    "SELECT DISTINCT
+       CASE WHEN Grouping_Type = 'Year_Month' THEN Year_Month_Filter ELSE Clade END AS Clade
+     FROM usage
+     WHERE \"Group\" = ? AND Variation_Type = ? AND Gene = ? AND Grouping_Type = ?",
+    list(subtype, var_type, gene, group_by)
+  )
+  if (is.null(res) || nrow(res) == 0) return(character(0))
+
+  values <- sort(stats::na.omit(as.character(res$Clade)))
+  special_values <- c("Unknown", "unassigned", "Unassigned")
+  present_specials <- intersect(special_values, values)
+  if (length(present_specials) > 0) values <- c(setdiff(values, present_specials), present_specials)
+  values
+}
+
+usage_max_position <- function(subtype, var_type, gene) {
+  res <- usage_query(
+    "SELECT MAX(Position) AS max_position FROM usage WHERE \"Group\" = ? AND Variation_Type = ? AND Gene = ?",
+    list(subtype, var_type, gene)
+  )
+  if (is.null(res) || nrow(res) == 0 || is.na(res$max_position[1])) return(NA_real_)
+  as.numeric(res$max_position[1])
+}
+
+usage_year_month_choices <- function(subtype, var_type, gene, group_by, position) {
+  res <- usage_query(
+    "SELECT DISTINCT Year_Month_Filter FROM usage
+     WHERE \"Group\" = ? AND Variation_Type = ? AND Gene = ? AND Grouping_Type = ?
+       AND Position = ? AND Year_Month_Filter IS NOT NULL",
+    list(subtype, var_type, gene, group_by, as.numeric(position))
+  )
+  if (is.null(res) || nrow(res) == 0) return(character(0))
+
+  ym_values <- stats::na.omit(as.character(res$Year_Month_Filter))
+  special_values <- c("Unknown", "unassigned", "Unassigned")
+  present_specials <- intersect(special_values, ym_values)
+  chronological_yms <- sort(setdiff(ym_values, special_values))
+  c(present_specials, chronological_yms)
+}
+
+usage_single_position <- function(subtype, var_type, gene, group_by, position, allowed_yms = NULL, min_seqs = 1, hide_empty_years = FALSE) {
+  ym_filter <- ""
+  if (!is.null(allowed_yms) && length(allowed_yms) > 0) {
+    in_values <- usage_sql_in_values(allowed_yms)
+    if (!is.null(in_values)) {
+      ym_filter <- paste0(" AND Year_Month_Filter IN (", in_values, ")")
+    }
+  }
+
+  sql <- paste0(
+    "SELECT \"Group\", Gene, Position,
+            CASE WHEN Grouping_Type = 'Year_Month' THEN Year_Month_Filter ELSE Clade END AS Clade,
+            AminoAcid, SUM(Count) AS Count,
+            ANY_VALUE(Codon_Usage) AS Codon_Usage
+     FROM usage
+     WHERE \"Group\" = ? AND Variation_Type = ? AND Gene = ? AND Grouping_Type = ?
+       AND Position = ? AND AminoAcid NOT IN ('X', '-')",
+    ym_filter,
+    " GROUP BY \"Group\", Gene, Position,
+       CASE WHEN Grouping_Type = 'Year_Month' THEN Year_Month_Filter ELSE Clade END,
+       AminoAcid"
+  )
+  res <- usage_query(sql, list(subtype, var_type, gene, group_by, as.numeric(position)))
+  if (is.null(res)) return(NULL)
+  if (nrow(res) == 0) {
+    out <- data.frame(Group=character(), Gene=character(), Position=numeric(), AminoAcid=character(), Count=numeric(), Valid_Total=numeric(), `Frequency(%)`=numeric(), check.names = FALSE)
+    out[[group_by]] <- character()
+    return(out)
+  }
+
+  res <- res %>%
+    dplyr::rename(!!group_by := Clade) %>%
+    group_by(.data[[group_by]]) %>%
+    mutate(
+      Valid_Total = sum(Count, na.rm = TRUE),
+      `Frequency(%)` = (Count / Valid_Total) * 100
+    ) %>%
+    ungroup() %>%
+    filter(Valid_Total >= min_seqs)
+
+  if (group_by == "Year" && isTRUE(hide_empty_years)) {
+    res <- res %>% filter(Valid_Total > 0)
+  }
+
+  if (all(is.na(res$Codon_Usage))) {
+    res$Codon_Usage <- NULL
+  }
+
+  res
+}
+
+usage_pairwise_gene_data <- function(subtype, var_type, gene, group_by, clades = NULL) {
+  clade_filter <- ""
+  if (!is.null(clades) && length(clades) > 0) {
+    in_values <- usage_sql_in_values(clades)
+    if (!is.null(in_values)) {
+      clade_filter <- paste0(
+        " AND CASE WHEN Grouping_Type = 'Year_Month' THEN Year_Month_Filter ELSE Clade END IN (",
+        in_values,
+        ")"
+      )
+    }
+  }
+
+  sql <- paste0(
+    "SELECT \"Group\", Gene,
+            CASE WHEN Grouping_Type = 'Year_Month' THEN Year_Month_Filter ELSE Clade END AS Clade,
+            Position, AminoAcid, SUM(Count) AS Count,
+            ANY_VALUE(Codon_Usage) AS Codon_Usage
+     FROM usage
+     WHERE \"Group\" = ? AND Variation_Type = ? AND Gene = ? AND Grouping_Type = ?",
+    clade_filter,
+    " GROUP BY \"Group\", Gene,
+       CASE WHEN Grouping_Type = 'Year_Month' THEN Year_Month_Filter ELSE Clade END,
+       Position, AminoAcid"
+  )
+  res <- usage_query(sql, list(subtype, var_type, gene, group_by))
+  if (is.null(res)) return(NULL)
+  if (all(is.na(res$Codon_Usage))) res$Codon_Usage <- NULL
+  res
+}
+
+usage_pairwise_differences_for_gene <- function(subtype, var_type, gene, group_by, clade1, clade2, min_freq) {
+  res <- usage_query(
+    "WITH agg AS (
+       SELECT Gene, Position,
+         CASE WHEN Grouping_Type = 'Year_Month' THEN Year_Month_Filter ELSE Clade END AS Clade,
+         AminoAcid, SUM(Count) AS Variant_Count
+       FROM usage
+       WHERE \"Group\" = ? AND Variation_Type = ? AND Gene = ? AND Grouping_Type = ?
+         AND CASE WHEN Grouping_Type = 'Year_Month' THEN Year_Month_Filter ELSE Clade END IN (?, ?)
+         AND AminoAcid NOT IN ('X', '-')
+       GROUP BY Gene, Position,
+         CASE WHEN Grouping_Type = 'Year_Month' THEN Year_Month_Filter ELSE Clade END,
+         AminoAcid
+     ),
+     freq AS (
+       SELECT *,
+         SUM(Variant_Count) OVER (PARTITION BY Gene, Position, Clade) AS Total_Seqs,
+         100.0 * Variant_Count / SUM(Variant_Count) OVER (PARTITION BY Gene, Position, Clade) AS Freq
+       FROM agg
+     ),
+     ranked AS (
+       SELECT *,
+         ROW_NUMBER() OVER (PARTITION BY Gene, Position, Clade ORDER BY Freq DESC, AminoAcid) AS rn
+       FROM freq
+     )
+     SELECT Gene, Position, Clade, AminoAcid, Freq
+     FROM ranked
+     WHERE rn = 1 AND Freq >= ?",
+    list(subtype, var_type, gene, group_by, clade1, clade2, as.numeric(min_freq))
+  )
+  if (is.null(res) || nrow(res) == 0) return(NULL)
+
+  c1_dom <- res %>%
+    filter(Clade == clade1) %>%
+    dplyr::select(Gene, Position, Clade1_AA = AminoAcid, Clade1_Freq = Freq)
+  c2_dom <- res %>%
+    filter(Clade == clade2) %>%
+    dplyr::select(Gene, Position, Clade2_AA = AminoAcid, Clade2_Freq = Freq)
+
+  inner_join(c1_dom, c2_dom, by = c("Gene", "Position")) %>%
+    filter(Clade1_AA != Clade2_AA)
+}
+
+usage_position_distribution <- function(subtype, var_type, gene, group_by, position, hide_empty_years = FALSE) {
+  res <- usage_pairwise_gene_data(subtype, var_type, gene, group_by)
+  if (is.null(res)) return(NULL)
+
+  res <- res %>%
+    filter(Position == position, !(AminoAcid %in% c("X", "-")))
+
+  if (is.null(res) || nrow(res) == 0) return(NULL)
+
+  has_codon <- "Codon_Usage" %in% colnames(res)
+  out <- res %>%
+    group_by(Clade, AminoAcid) %>%
+    summarise(
+      Count = sum(Count, na.rm = TRUE),
+      Codon_Usage = if (has_codon) dplyr::first(Codon_Usage) else NA_character_,
+      .groups = "drop_last"
+    ) %>%
+    mutate(Total_in_Clade = sum(Count)) %>%
+    mutate(`Frequency(%)` = (Count / Total_in_Clade) * 100) %>%
+    ungroup()
+
+  if (group_by == "Year" && isTRUE(hide_empty_years)) {
+    out <- out %>% filter(Total_in_Clade > 0)
+  }
+  if (all(is.na(out$Codon_Usage))) out$Codon_Usage <- NULL
+  out
+}
+
+usage_entropy_data <- function(subtype, var_type, gene, group_by, clade = "All") {
+  clade_filter <- ""
+  params <- list(subtype, var_type, gene, group_by)
+  if (!identical(clade, "All")) {
+    clade_filter <- " AND CASE WHEN Grouping_Type = 'Year_Month' THEN Year_Month_Filter ELSE Clade END = ?"
+    params <- c(params, list(clade))
+  }
+
+  res <- usage_query(
+    paste0(
+      "SELECT Position, AminoAcid, SUM(Count) AS AA_Sum
+       FROM usage
+       WHERE \"Group\" = ? AND Variation_Type = ? AND Gene = ? AND Grouping_Type = ?",
+      clade_filter,
+      " AND AminoAcid NOT IN ('X', '-')
+       GROUP BY Position, AminoAcid"
+    ),
+    params
+  )
+  if (is.null(res)) return(NULL)
+
+  res %>%
+    group_by(Position) %>%
+    mutate(Pos_Total = sum(AA_Sum), p = AA_Sum / Pos_Total) %>%
+    filter(p > 0) %>%
+    summarise(Entropy = -sum(p * log2(p)), .groups = "drop")
+}
+
+usage_lollipop_consensus <- function(subtype, var_type, gene, group_by, ref_group, tar_group, min_freq) {
+  res <- usage_query(
+    "WITH agg AS (
+       SELECT Position,
+         CASE WHEN Grouping_Type = 'Year_Month' THEN Year_Month_Filter ELSE Clade END AS Clade,
+         AminoAcid, SUM(Count) AS Count
+       FROM usage
+       WHERE \"Group\" = ? AND Variation_Type = ? AND Gene = ? AND Grouping_Type = ?
+         AND CASE WHEN Grouping_Type = 'Year_Month' THEN Year_Month_Filter ELSE Clade END IN (?, ?)
+         AND AminoAcid NOT IN ('X', '-')
+       GROUP BY Position,
+         CASE WHEN Grouping_Type = 'Year_Month' THEN Year_Month_Filter ELSE Clade END,
+         AminoAcid
+     ),
+     freq AS (
+       SELECT *,
+         SUM(Count) OVER (PARTITION BY Position, Clade) AS Valid_Total,
+         100.0 * Count / SUM(Count) OVER (PARTITION BY Position, Clade) AS New_Frequency
+       FROM agg
+     ),
+     ranked AS (
+       SELECT *,
+         ROW_NUMBER() OVER (PARTITION BY Position, Clade ORDER BY New_Frequency DESC, AminoAcid) AS rn
+       FROM freq
+     )
+     SELECT Position, Clade, AminoAcid, New_Frequency
+     FROM ranked
+     WHERE rn = 1 AND New_Frequency >= ?",
+    list(subtype, var_type, gene, group_by, ref_group, tar_group, as.numeric(min_freq))
+  )
+  if (is.null(res)) return(NULL)
+  res
 }

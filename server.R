@@ -64,6 +64,20 @@ server <- function(input, output, session) {
   current_usage_by_clade <- reactive({
     req(input$global_subtype, input$variation_type, input$sp_gene)
     var_lower <- tolower(input$variation_type)
+
+    if (usage_duckdb_available()) {
+      groups <- usage_available_groups(input$global_subtype, input$variation_type, input$sp_gene)
+      group_by <- if ("HA_clade" %in% groups) "HA_clade" else setdiff(groups, c("Year", "Year_Month"))[1]
+      if (is.na(group_by) || length(group_by) == 0) group_by <- groups[1]
+
+      res <- usage_query(
+        "SELECT DISTINCT \"Group\", Gene, Clade, Position
+         FROM usage
+         WHERE \"Group\" = ? AND Variation_Type = ? AND Gene = ? AND Grouping_Type = ?",
+        list(input$global_subtype, input$variation_type, input$sp_gene, group_by)
+      )
+      if (!is.null(res) && nrow(res) > 0) return(res)
+    }
     
     dir_path <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$sp_gene, "/")
     rds_file <- paste0(dir_path, var_lower, "_usage_by_HA_clade.rds")
@@ -105,9 +119,7 @@ server <- function(input, output, session) {
   # --- HELPER: Update Grouping Choices based on Loaded Data ---
   observe({
     req(input$global_subtype, input$variation_type, input$sp_gene)
-    dir_path <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$sp_gene, "/")
-    files <- list.files(dir_path, pattern = paste0("^", tolower(input$variation_type), "_usage_by_.*\\.rds$"))
-    available_groups <- sub(paste0("^", tolower(input$variation_type), "_usage_by_(.*)\\.rds$"), "\\1", files)
+    available_groups <- usage_available_groups(input$global_subtype, input$variation_type, input$sp_gene)
     
     if (length(available_groups) == 0) return()
 
@@ -160,6 +172,10 @@ server <- function(input, output, session) {
     req(input$global_subtype, input$variation_type, input$sp_gene, input$sp_group_by, sp_position_debounced())
     pos <- sp_position_debounced()
 
+    if (usage_duckdb_available()) {
+      return(usage_year_month_choices(input$global_subtype, input$variation_type, input$sp_gene, input$sp_group_by, pos))
+    }
+
     rds_file <- paste0(
       "data/", input$global_subtype, "/", input$variation_type, "/", input$sp_gene, "/",
       tolower(input$variation_type), "_usage_by_", input$sp_group_by, ".rds"
@@ -183,6 +199,20 @@ server <- function(input, output, session) {
     c(present_specials, chronological_yms)
   })
 
+  get_selected_year_months <- function(ym_values, start_value, end_value) {
+    if (length(ym_values) == 0 || is.null(start_value) || is.null(end_value)) return(NULL)
+    if (!(start_value %in% ym_values) || !(end_value %in% ym_values)) return(NULL)
+
+    selected_idx <- match(c(start_value, end_value), ym_values)
+    ym_values[seq(min(selected_idx), max(selected_idx))]
+  }
+
+  every_nth_value <- function(values, n = 6) {
+    values <- as.character(values)
+    if (length(values) == 0) return(character(0))
+    values[seq.int(1, length(values), by = n)]
+  }
+
   output$sp_year_month_range_ui <- renderUI({
     ym_values <- sp_year_month_choices()
 
@@ -192,25 +222,23 @@ server <- function(input, output, session) {
       )
     }
 
-    current_sel <- input$sp_year_month_range
-    selected_vals <- if (
-      !is.null(current_sel) &&
-      length(current_sel) == 2 &&
-      all(current_sel %in% ym_values)
-    ) {
-      current_sel
+    start_sel <- if (!is.null(input$sp_year_month_start) && input$sp_year_month_start %in% ym_values) {
+      input$sp_year_month_start
     } else {
-      c(ym_values[1], ym_values[length(ym_values)])
+      ym_values[1]
+    }
+    end_sel <- if (!is.null(input$sp_year_month_end) && input$sp_year_month_end %in% ym_values) {
+      input$sp_year_month_end
+    } else {
+      ym_values[length(ym_values)]
     }
 
-    sliderTextInput(
-      inputId = "sp_year_month_range",
-      label = "Filter Year-Month:",
-      choices = ym_values,
-      selected = selected_vals,
-      grid = FALSE,
-      dragRange = TRUE,
-      width = "100%"
+    tagList(
+      tags$label("Filter Year-Month:", style = "font-weight: bold; color: #2c3e50;"),
+      fluidRow(
+        column(6, selectInput("sp_year_month_start", "Start:", choices = ym_values, selected = start_sel, width = "100%")),
+        column(6, selectInput("sp_year_month_end", "End:", choices = ym_values, selected = end_sel, width = "100%"))
+      )
     )
   })
   
@@ -257,9 +285,7 @@ server <- function(input, output, session) {
   # --- HELPER: Update Pairwise & Landscape Grouping Choices ---
   observeEvent(list(input$global_subtype, input$variation_type, input$sp_gene), {
     req(input$sp_gene)
-    dir_path <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$sp_gene, "/")
-    files <- list.files(dir_path, pattern = paste0("^", tolower(input$variation_type), "_usage_by_.*\\.rds$"))
-    available_groups <- sub(paste0("^", tolower(input$variation_type), "_usage_by_(.*)\\.rds$"), "\\1", files)
+    available_groups <- usage_available_groups(input$global_subtype, input$variation_type, input$sp_gene)
     
     if (length(available_groups) == 0) return()
     
@@ -321,6 +347,12 @@ server <- function(input, output, session) {
   load_pairwise_gene_data <- function(gene, group_by = input$pw_group_by) {
     req(input$global_subtype, input$variation_type, group_by)
 
+    if (usage_duckdb_available()) {
+      df <- usage_pairwise_gene_data(input$global_subtype, input$variation_type, gene, group_by)
+      if (is.null(df)) return(empty_pairwise_usage_df())
+      return(df)
+    }
+
     df <- get_lazy_table(get_pairwise_rds_file(gene, group_by), max_tables = 2, max_mem_mb = 450)
     if (is.null(df)) return(empty_pairwise_usage_df())
 
@@ -351,6 +383,12 @@ server <- function(input, output, session) {
 
   get_pairwise_position_distribution <- function(gene, position, group_by = input$pw_group_by) {
     req(position)
+
+    if (usage_duckdb_available()) {
+      res <- usage_position_distribution(input$global_subtype, input$variation_type, gene, group_by, position, input$pw_hide_empty_years)
+      if (is.null(res)) return(empty_pairwise_position_df(include_codon = FALSE))
+      return(res)
+    }
 
     res <- load_pairwise_gene_data(gene, group_by) %>%
       filter(Position == position) %>%
@@ -386,6 +424,27 @@ server <- function(input, output, session) {
     message("Pairwise comparison started. Memory before loop: ", round(sum(gc(verbose = FALSE)[, 2]), 1), " MB")
 
     for (gene in genes) {
+      if (usage_duckdb_available()) {
+        gene_diffs <- usage_pairwise_differences_for_gene(
+          input$global_subtype,
+          input$variation_type,
+          gene,
+          input$pw_group_by,
+          clade1,
+          clade2,
+          min_freq
+        )
+
+        if (!is.null(gene_diffs) && nrow(gene_diffs) > 0) {
+          diff_idx <- diff_idx + 1
+          diff_list[[diff_idx]] <- gene_diffs
+        }
+
+        rm(gene_diffs)
+        gc(FALSE)
+        next
+      }
+
       gene_data <- load_pairwise_gene_data(gene) %>%
         filter(Clade %in% c(clade1, clade2))
 
@@ -434,6 +493,14 @@ server <- function(input, output, session) {
 
   ent_usage_data <- reactive({
     req(input$global_subtype, input$variation_type, input$ent_group_by, input$ent_gene)
+    if (usage_duckdb_available()) {
+      df <- usage_pairwise_gene_data(input$global_subtype, input$variation_type, input$ent_gene, input$ent_group_by)
+      if (is.null(df)) {
+        return(data.frame(Group=character(), Gene=character(), Clade=character(), Position=numeric(), AminoAcid=character(), Count=numeric()))
+      }
+      return(df)
+    }
+
     var_lower <- tolower(input$variation_type)
     rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$ent_gene, "/", var_lower, "_usage_by_", input$ent_group_by, ".rds")
     
@@ -451,6 +518,14 @@ server <- function(input, output, session) {
 
   lol_usage_data <- reactive({
     req(input$global_subtype, input$variation_type, input$lol_group_by, input$lol_gene)
+    if (usage_duckdb_available()) {
+      df <- usage_pairwise_gene_data(input$global_subtype, input$variation_type, input$lol_gene, input$lol_group_by)
+      if (is.null(df)) {
+        return(data.frame(Group=character(), Gene=character(), Clade=character(), Position=numeric(), AminoAcid=character(), Count=numeric()))
+      }
+      return(df)
+    }
+
     var_lower <- tolower(input$variation_type)
     rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$lol_gene, "/", var_lower, "_usage_by_", input$lol_group_by, ".rds")
     
@@ -491,6 +566,14 @@ server <- function(input, output, session) {
     genes <- list.dirs(paste0("data/", input$global_subtype, "/", input$variation_type, "/"), full.names = FALSE, recursive = FALSE)
     if(length(genes) == 0) return()
     gene <- if("HA" %in% genes) "HA" else genes[1]
+
+    if (usage_duckdb_available()) {
+      clades <- usage_distinct_group_values(input$global_subtype, input$variation_type, gene, input$pw_group_by)
+      if (length(clades) == 0) return()
+      updateSelectInput(session, "pw_clade1", choices = c("Select Group..." = "", clades), selected = "")
+      updateSelectInput(session, "pw_clade2", choices = c("Select Group..." = "", clades), selected = "")
+      return()
+    }
     
     rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", gene, "/", tolower(input$variation_type), "_usage_by_", input$pw_group_by, ".rds")
     df <- get_lazy_table(rds_file)
@@ -513,6 +596,13 @@ server <- function(input, output, session) {
   
   observeEvent(list(input$global_subtype, input$variation_type, input$ent_group_by, input$ent_gene), {
     req(input$global_subtype, input$variation_type, input$ent_group_by, input$ent_gene)
+
+    if (usage_duckdb_available()) {
+      clade_choices <- usage_distinct_group_values(input$global_subtype, input$variation_type, input$ent_gene, input$ent_group_by)
+      if (length(clade_choices) == 0) return()
+      updateSelectInput(session, "ent_group", choices = c("All", clade_choices), selected = "All")
+      return()
+    }
     
     rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$ent_gene, "/", tolower(input$variation_type), "_usage_by_", input$ent_group_by, ".rds")
     df <- get_lazy_table(rds_file)
@@ -526,6 +616,14 @@ server <- function(input, output, session) {
   
   observeEvent(list(input$global_subtype, input$variation_type, input$lol_group_by, input$lol_gene), {
     req(input$global_subtype, input$variation_type, input$lol_group_by, input$lol_gene)
+
+    if (usage_duckdb_available()) {
+      clades <- usage_distinct_group_values(input$global_subtype, input$variation_type, input$lol_gene, input$lol_group_by)
+      if (length(clades) == 0) return()
+      updateSelectInput(session, "lol_ref_group", choices = clades, selected = clades[1])
+      updateSelectInput(session, "lol_tar_group", choices = clades, selected = if(length(clades)>1) clades[2] else clades[1])
+      return()
+    }
     
     rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$lol_gene, "/", tolower(input$variation_type), "_usage_by_", input$lol_group_by, ".rds")
     df <- get_lazy_table(rds_file)
@@ -546,6 +644,12 @@ server <- function(input, output, session) {
   # --- HELPER: Dynamically Update Position Limit based on Gene Length (Tab 1) ---
   observeEvent(list(input$sp_gene, input$variation_type), {
     req(input$global_subtype, input$sp_gene)
+    if (usage_duckdb_available()) {
+      max_val <- usage_max_position(input$global_subtype, input$variation_type, input$sp_gene)
+      if (!is.na(max_val)) updateNumericInput(session, "sp_position", max = max_val)
+      return()
+    }
+
     g_data <- current_usage_by_clade() %>% filter(Group == input$global_subtype, Gene == input$sp_gene)
     if(nrow(g_data) > 0) updateNumericInput(session, "sp_position", max = max(g_data$Position, na.rm=TRUE))
   })
@@ -574,16 +678,19 @@ server <- function(input, output, session) {
     
     # Find valid groups for this subtype by scanning a sample gene directory (HA)
     sample_gene <- "HA"
+    gene_for_groups <- sample_gene
     dir_path <- paste0("data/", input$clade_plot_subtype, "/AA/", sample_gene, "/")
     if (!dir.exists(dir_path)) {
        # Fallback to first available gene
        genes <- list.dirs(paste0("data/", input$clade_plot_subtype, "/AA/"), full.names = FALSE, recursive = FALSE)
-       if (length(genes) > 0) dir_path <- paste0("data/", input$clade_plot_subtype, "/AA/", genes[1], "/")
+       if (length(genes) > 0) {
+         gene_for_groups <- genes[1]
+         dir_path <- paste0("data/", input$clade_plot_subtype, "/AA/", gene_for_groups, "/")
+       }
     }
     
     if (dir.exists(dir_path)) {
-      files <- list.files(dir_path, pattern = "^aa_usage_by_.*\\.rds$")
-      all_usage_groups <- sub("^aa_usage_by_(.*)\\.rds$", "\\1", files)
+      all_usage_groups <- usage_available_groups(input$clade_plot_subtype, "AA", gene_for_groups)
       
       valid_groups <- setdiff(all_usage_groups, c("Year", "Year_Month"))
       
@@ -771,7 +878,7 @@ server <- function(input, output, session) {
 
   # This observer triggers when any relevant input changes. It performs the heavy
   # calculation and shows a full-screen waiter while doing so.
-  observeEvent(list(input$global_subtype, input$sp_gene, sp_position_debounced(), input$sp_group_by, input$variation_type, input$sp_min_seqs, input$sp_hide_empty_years, input$sp_year_month_range), {
+  observeEvent(list(input$global_subtype, input$sp_gene, sp_position_debounced(), input$sp_group_by, input$variation_type, input$sp_min_seqs, input$sp_hide_empty_years, input$sp_year_month_start, input$sp_year_month_end), {
     subtype   <- input$global_subtype
     gene      <- input$sp_gene
     pos       <- sp_position_debounced()
@@ -790,6 +897,29 @@ server <- function(input, output, session) {
       color = "rgba(44, 62, 80, 0.9)"
     )
     on.exit(waiter_hide(), add = TRUE)
+
+    if (usage_duckdb_available()) {
+      ym_values <- sp_year_month_choices()
+      allowed_yms <- get_selected_year_months(ym_values, input$sp_year_month_start, input$sp_year_month_end)
+
+      filtered <- usage_single_position(
+        subtype,
+        var_type,
+        gene,
+        group_col,
+        pos,
+        allowed_yms = allowed_yms,
+        min_seqs = input$sp_min_seqs,
+        hide_empty_years = input$sp_hide_empty_years
+      )
+
+      if (is.null(filtered)) {
+        sp_data_val(paste("Table not found for group:", group_col))
+      } else {
+        sp_data_val(filtered)
+      }
+      return()
+    }
     
     var_lower <- tolower(var_type)
     rds_file <- paste0("data/", subtype, "/", var_type, "/", gene, "/", var_lower, "_usage_by_", group_col, ".rds")
@@ -808,12 +938,10 @@ server <- function(input, output, session) {
     filtered <- data %>% 
       filter(Group == subtype, Gene == gene, Position == pos) %>%
       {
-        selected_range <- input$sp_year_month_range
         ym_values <- sp_year_month_choices()
+        allowed_yms <- get_selected_year_months(ym_values, input$sp_year_month_start, input$sp_year_month_end)
 
-        if (!is.null(selected_range) && length(selected_range) == 2 && all(selected_range %in% ym_values)) {
-          selected_idx <- match(selected_range, ym_values)
-          allowed_yms <- ym_values[seq(min(selected_idx), max(selected_idx))]
+        if (!is.null(allowed_yms)) {
           dplyr::filter(., Year_Month_Filter %in% allowed_yms)
         } else {
           .
@@ -913,10 +1041,10 @@ server <- function(input, output, session) {
       if (has_specials) {
         # Always include specials, then sample every 6th from the chronological months
         chronological_yms <- setdiff(all_yms, special_values)
-        sampled_yms <- chronological_yms[seq(1, length(chronological_yms), by = 6)]
+        sampled_yms <- every_nth_value(chronological_yms)
         x_scale <- scale_x_discrete(breaks = c(present_specials, sampled_yms))
       } else {
-        x_scale <- scale_x_discrete(breaks = all_yms[seq(1, length(all_yms), by = 6)])
+        x_scale <- scale_x_discrete(breaks = every_nth_value(all_yms))
       }
     } else {
       # Generic handling for other groups (Clades, etc.): Ensure Unknown/unassigned are first
@@ -1049,6 +1177,14 @@ server <- function(input, output, session) {
   
   output$sp_range_label <- renderUI({
     req(input$global_subtype, input$sp_gene)
+
+    if (usage_duckdb_available()) {
+      gene_max <- usage_max_position(input$global_subtype, input$variation_type, input$sp_gene)
+      req(!is.na(gene_max))
+      return(tags$label(paste0(variant_label(), " Position (1 - ", gene_max, "):"),
+                 `for` = "sp_position",
+                 style = "display: block; margin-bottom: 5px; font-weight: bold; color: #2c3e50;"))
+    }
     
     gene_max <- current_usage_by_clade() %>% 
       filter(Group == as.character(input$global_subtype), 
@@ -1090,6 +1226,18 @@ server <- function(input, output, session) {
   
   observeEvent(list(input$sp_gene, input$variation_type), {
     req(input$global_subtype, input$sp_gene)
+
+    if (usage_duckdb_available()) {
+      max_val <- usage_max_position(input$global_subtype, input$variation_type, input$sp_gene)
+      if (!is.na(max_val)) {
+        updateNumericInput(session, "sp_position", max = max_val)
+        updateSliderInput(session, "sp_pos_slider", max = max_val)
+        if(input$sp_position > max_val) {
+          updateNumericInput(session, "sp_position", value = max_val)
+        }
+      }
+      return()
+    }
     
     gene_data <- current_usage_by_clade() %>% 
       filter(Group == as.character(input$global_subtype), 
@@ -1107,6 +1255,14 @@ server <- function(input, output, session) {
   
   observeEvent(input$sp_pos_plus, {
     req(input$global_subtype, input$sp_gene)
+
+    if (usage_duckdb_available()) {
+      gene_max <- usage_max_position(input$global_subtype, input$variation_type, input$sp_gene)
+      req(!is.na(gene_max))
+      updateNumericInput(session, "sp_position", value = min(gene_max, input$sp_position + 1))
+      return()
+    }
+
     gene_max <- current_usage_by_clade() %>% 
       filter(Group == as.character(input$global_subtype), Gene == as.character(input$sp_gene)) %>% 
       pull(Position) %>% max(na.rm = TRUE)
@@ -1122,6 +1278,20 @@ server <- function(input, output, session) {
   
   observeEvent(list(input$sp_position, input$variation_type), {
     req(input$global_subtype, input$sp_gene)
+
+    if (usage_duckdb_available()) {
+      gene_max <- usage_max_position(input$global_subtype, input$variation_type, input$sp_gene)
+      req(!is.na(gene_max))
+      if (!is.na(input$sp_position) && input$sp_position > gene_max) {
+        updateNumericInput(session, "sp_position", value = gene_max)
+        showNotification(
+          paste("Maximum position for", input$sp_gene, "is", gene_max),
+          type = "warning",
+          duration = 2
+        )
+      }
+      return()
+    }
     
     gene_max <- current_usage_by_clade() %>% 
       filter(Group == as.character(input$global_subtype), 
@@ -1178,11 +1348,16 @@ server <- function(input, output, session) {
     genes <- list.dirs(paste0("data/", input$global_subtype, "/", input$variation_type, "/"), full.names = FALSE, recursive = FALSE)
     if(length(genes) > 0) {
       gene <- if("HA" %in% genes) "HA" else genes[1]
+      if (usage_duckdb_available()) {
+        valid_clades <- usage_distinct_group_values(input$global_subtype, input$variation_type, gene, input$pw_group_by)
+        if(length(valid_clades) > 0 && (!(input$pw_clade1 %in% c("", valid_clades)) || !(input$pw_clade2 %in% c("", valid_clades)))) return()
+      } else {
       rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", gene, "/", tolower(input$variation_type), "_usage_by_", input$pw_group_by, ".rds")
       df <- get_lazy_table(rds_file)
       if(!is.null(df)) {
         valid_clades <- if(input$pw_group_by %in% colnames(df)) unique(as.character(df[[input$pw_group_by]])) else if("Clade" %in% colnames(df)) unique(as.character(df$Clade)) else "Unknown"
         if(!(input$pw_clade1 %in% c("", valid_clades)) || !(input$pw_clade2 %in% c("", valid_clades))) return()
+      }
       }
     }
     
@@ -1363,13 +1538,13 @@ server <- function(input, output, session) {
       data$Clade <- factor(data$Clade, levels = all_yms)
       if (has_specials) {
         chronological_yms <- setdiff(all_yms, special_values)
-        sampled_yms <- chronological_yms[seq(1, length(chronological_yms), by = 6)]
+        sampled_yms <- every_nth_value(chronological_yms)
         bks <- unique(c(present_specials, sampled_yms, selected_clades[selected_clades %in% all_yms]))
         # Retain original chronological ordering for the breaks
         bks <- all_yms[all_yms %in% bks] 
         x_scale <- scale_x_discrete(breaks = bks, labels = unname(html_labels[bks]))
       } else {
-        bks <- all_yms[seq(1, length(all_yms), by = 6)]
+        bks <- every_nth_value(all_yms)
         bks <- unique(c(bks, selected_clades[selected_clades %in% all_yms]))
         bks <- all_yms[all_yms %in% bks] 
         x_scale <- scale_x_discrete(breaks = bks, labels = unname(html_labels[bks]))
@@ -1469,18 +1644,22 @@ server <- function(input, output, session) {
       for(i in 1:nrow(diffs)) {
         r_gene <- diffs$Gene[i]; r_pos <- diffs$Position[i]
 
-        if (!identical(current_gene, r_gene)) {
+        if (usage_duckdb_available()) {
+          pos_data <- get_pairwise_position_distribution(r_gene, r_pos)
+        } else {
+          if (!identical(current_gene, r_gene)) {
           current_gene <- r_gene
           current_gene_data <- load_pairwise_gene_data(r_gene)
-        }
+          }
 
-        pos_data <- current_gene_data %>%
-          filter(Position == r_pos) %>%
-          filter(!(AminoAcid %in% c("X", "-"))) %>%
-          group_by(Clade, AminoAcid) %>%
-          summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop_last") %>%
-          mutate(`Frequency(%)` = (Count / sum(Count)) * 100) %>%
-          ungroup()
+          pos_data <- current_gene_data %>%
+            filter(Position == r_pos) %>%
+            filter(!(AminoAcid %in% c("X", "-"))) %>%
+            group_by(Clade, AminoAcid) %>%
+            summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop_last") %>%
+            mutate(`Frequency(%)` = (Count / sum(Count)) * 100) %>%
+            ungroup()
+        }
         
         sorted_clades <- sort(unique(pos_data$Clade))
         pct_matrix <- left_join(base_df, pos_data %>% dplyr::select(Clade, AminoAcid, `Frequency(%)`) %>% pivot_wider(names_from = Clade, values_from = `Frequency(%)`, values_fill = 0), by = "AminoAcid")
@@ -1518,25 +1697,29 @@ server <- function(input, output, session) {
   
   output$ent_plot <- renderPlotly({
     req(input$global_subtype, input$ent_gene, input$ent_group)
-    
-    tmp <- ent_usage_data() %>% 
-      filter(Group == input$global_subtype, Gene == input$ent_gene)
-    
-    if (input$ent_group != "All") {
-      tmp <- tmp %>% filter(Clade == input$ent_group)
+
+    if (usage_duckdb_available()) {
+      ent_data <- usage_entropy_data(input$global_subtype, input$variation_type, input$ent_gene, input$ent_group_by, input$ent_group)
+    } else {
+      tmp <- ent_usage_data() %>%
+        filter(Group == input$global_subtype, Gene == input$ent_gene)
+
+      if (input$ent_group != "All") {
+        tmp <- tmp %>% filter(Clade == input$ent_group)
+      }
+
+      ent_data <- tmp %>%
+        # NEW: Remove "X" and "-" to ensure entropy only measures valid biological variation
+        filter(!(AminoAcid %in% c("X", "-"))) %>%
+        group_by(Position, AminoAcid) %>%
+        summarise(AA_Sum = sum(Count, na.rm = TRUE), .groups = "drop_last") %>%
+        mutate(
+          Pos_Total = sum(AA_Sum),
+          p = AA_Sum / Pos_Total
+        ) %>%
+        filter(p > 0) %>%
+        summarise(Entropy = -sum(p * log2(p)), .groups = "drop")
     }
-    
-    ent_data <- tmp %>%
-      # NEW: Remove "X" and "-" to ensure entropy only measures valid biological variation
-      filter(!(AminoAcid %in% c("X", "-"))) %>%
-      group_by(Position, AminoAcid) %>%
-      summarise(AA_Sum = sum(Count, na.rm = TRUE), .groups = "drop_last") %>%
-      mutate(
-        Pos_Total = sum(AA_Sum),
-        p = AA_Sum / Pos_Total
-      ) %>%
-      filter(p > 0) %>%
-      summarise(Entropy = -sum(p * log2(p)), .groups = "drop")
     
     validate(need(nrow(ent_data) > 0, "No data available for these selections after filtering unknowns."))
     
@@ -1608,46 +1791,66 @@ server <- function(input, output, session) {
   lol_plot_object <- reactive({
     req(input$global_subtype, input$lol_gene, input$lol_ref_group, input$lol_tar_group)
     validate(need(input$lol_ref_group != input$lol_tar_group, paste("Reference and Target groups are identical. Please select different", input$lol_group_by, "groups.")))
-    
-    # 1. Fetch Reference Clade Data (c1)
-    c1 <- lol_usage_data() %>% 
-      filter(Group == input$global_subtype, Clade == input$lol_ref_group, Gene == input$lol_gene) %>% 
-      # Step A: Exclude "X" and "-"
-      filter(!(AminoAcid %in% c("X", "-"))) %>%
-      # NEW Step: Aggregate Counts across sub-groups (Year, Month, etc.) to get clade-wide totals per position
-      group_by(Position, AminoAcid) %>%
-      summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop_last") %>%
-      # Step B: Recalculate frequencies based on valid amino acids
-      group_by(Position) %>% 
-      mutate(
-        Valid_Total = sum(Count), 
-        New_Frequency = (Count / Valid_Total) * 100
-      ) %>%
-      # Step C: Find the consensus residue
-      filter(New_Frequency == max(New_Frequency)) %>% 
-      filter(row_number() == 1, New_Frequency >= input$lol_min_freq) %>% 
-      ungroup() %>% 
-      dplyr::select(Position, Ref_AA = AminoAcid)
-    
-    # 2. Fetch Target Clade Data (c2)
-    c2 <- lol_usage_data() %>% 
-      filter(Group == input$global_subtype, Clade == input$lol_tar_group, Gene == input$lol_gene) %>% 
-      # Step A: Exclude "X" and "-"
-      filter(!(AminoAcid %in% c("X", "-"))) %>%
-      # NEW Step: Aggregate Counts across sub-groups
-      group_by(Position, AminoAcid) %>%
-      summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop_last") %>%
-      # Step B: Recalculate frequencies based on valid amino acids
-      group_by(Position) %>% 
-      mutate(
-        Valid_Total = sum(Count), 
-        New_Frequency = (Count / Valid_Total) * 100
-      ) %>%
-      # Step C: Find the consensus residue
-      filter(New_Frequency == max(New_Frequency)) %>% 
-      filter(row_number() == 1, New_Frequency >= input$lol_min_freq) %>% 
-      ungroup() %>% 
-      dplyr::select(Position, Tar_AA = AminoAcid)
+
+    if (usage_duckdb_available()) {
+      consensus <- usage_lollipop_consensus(
+        input$global_subtype,
+        input$variation_type,
+        input$lol_gene,
+        input$lol_group_by,
+        input$lol_ref_group,
+        input$lol_tar_group,
+        input$lol_min_freq
+      )
+      validate(need(!is.null(consensus), "No fixed mutations found between these groups."))
+
+      c1 <- consensus %>%
+        filter(Clade == input$lol_ref_group) %>%
+        dplyr::select(Position, Ref_AA = AminoAcid)
+      c2 <- consensus %>%
+        filter(Clade == input$lol_tar_group) %>%
+        dplyr::select(Position, Tar_AA = AminoAcid)
+    } else {
+      # 1. Fetch Reference Clade Data (c1)
+      c1 <- lol_usage_data() %>%
+        filter(Group == input$global_subtype, Clade == input$lol_ref_group, Gene == input$lol_gene) %>%
+        # Step A: Exclude "X" and "-"
+        filter(!(AminoAcid %in% c("X", "-"))) %>%
+        # NEW Step: Aggregate Counts across sub-groups (Year, Month, etc.) to get clade-wide totals per position
+        group_by(Position, AminoAcid) %>%
+        summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop_last") %>%
+        # Step B: Recalculate frequencies based on valid amino acids
+        group_by(Position) %>%
+        mutate(
+          Valid_Total = sum(Count),
+          New_Frequency = (Count / Valid_Total) * 100
+        ) %>%
+        # Step C: Find the consensus residue
+        filter(New_Frequency == max(New_Frequency)) %>%
+        filter(row_number() == 1, New_Frequency >= input$lol_min_freq) %>%
+        ungroup() %>%
+        dplyr::select(Position, Ref_AA = AminoAcid)
+
+      # 2. Fetch Target Clade Data (c2)
+      c2 <- lol_usage_data() %>%
+        filter(Group == input$global_subtype, Clade == input$lol_tar_group, Gene == input$lol_gene) %>%
+        # Step A: Exclude "X" and "-"
+        filter(!(AminoAcid %in% c("X", "-"))) %>%
+        # NEW Step: Aggregate Counts across sub-groups
+        group_by(Position, AminoAcid) %>%
+        summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop_last") %>%
+        # Step B: Recalculate frequencies based on valid amino acids
+        group_by(Position) %>%
+        mutate(
+          Valid_Total = sum(Count),
+          New_Frequency = (Count / Valid_Total) * 100
+        ) %>%
+        # Step C: Find the consensus residue
+        filter(New_Frequency == max(New_Frequency)) %>%
+        filter(row_number() == 1, New_Frequency >= input$lol_min_freq) %>%
+        ungroup() %>%
+        dplyr::select(Position, Tar_AA = AminoAcid)
+    }
     
     muts <- inner_join(c1, c2, by = "Position") %>% 
       filter(Ref_AA != Tar_AA) %>% 

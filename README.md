@@ -39,7 +39,8 @@ To run this application locally, you will need **R (>= 4.0.0)** installed on you
 # 1. Install CRAN packages
 install.packages(c("shiny", "dplyr", "ggplot2", "DT", "readr", "tidyr", 
                    "openxlsx", "plotly", "waiter", "lubridate", "tidyverse", 
-                   "leaflet", "leaflet.minicharts", "shinyWidgets", "shinyjs"))
+                   "leaflet", "leaflet.minicharts", "shinyWidgets", "shinyjs",
+                   "DBI", "dbplyr", "duckdb"))
 
 # 2. Install Bioconductor packages
 if (!require("BiocManager", quietly = TRUE))

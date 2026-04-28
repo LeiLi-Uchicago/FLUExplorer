@@ -1,5 +1,21 @@
 # Development Log - FLU Divergence Explorer
 
+## Date: April 28, 2026
+
+### 1. DuckDB Data Backend
+- **DuckDB Usage Cache:** Added a generated `data/flu_explorer.duckdb` cache that normalizes AA/NT usage CSVs into a single queryable `usage` table.
+- **Query Pushdown:** Refactored Single Position, Pairwise Comparison, Entropy Landscape, and Mutation Lollipop workflows to request filtered/aggregated result sets from DuckDB rather than loading entire `.rds` tables into R memory.
+- **Fallback Compatibility:** Preserved the legacy `.rds` lazy-loading path when the `duckdb` package or DuckDB cache is unavailable.
+- **Index Guard:** Made DuckDB index creation opt-in via `FLUEXPLORER_DUCKDB_CREATE_INDEXES=true` after local testing showed index creation can be unstable on the full 421M-row cache.
+
+### 2. Year-Month Filtering & Plot Fixes
+- **Stable Time Filter UI:** Replaced the draggable Year-Month slider with explicit Start and End selectors in the Single Position Explorer to avoid jumpy behavior across dense time ranges.
+- **Year-Month Normalization Fix:** Corrected DuckDB normalization so `Year_Month` grouping is derived from `Year` and `Month` instead of falling back to `Unknown`.
+- **Backward-Compatible Query Fix:** Updated DuckDB query helpers to use `Year_Month_Filter` whenever `Grouping_Type == "Year_Month"`, so already-built caches with incorrect `Clade = Unknown` still return correct `YYYY-MM` groups.
+- **Sparse Month Plot Fix:** Added safe Year-Month axis break sampling to prevent the `wrong sign in 'by' argument` error when a position has sparse or special time values.
+
+---
+
 ## Date: March 26, 2026
 
 ### 1. Performance & User Experience (UX) Enhancements

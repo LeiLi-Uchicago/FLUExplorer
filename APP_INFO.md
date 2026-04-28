@@ -26,6 +26,12 @@ Data were sourced from GISAID, with all sequences annotated via Nextclade 3. The
 
 ## Update Log
 
+### 2026-04-28
+
+- Added DuckDB-backed usage table loading to reduce memory pressure from large amino acid and nucleotide tables. When DuckDB is available, FLUExplorer now queries only the selected subtype, gene, position, grouping, and time range instead of loading full tables into memory.
+- Improved the Single Position Explorer time filter by replacing the draggable Year-Month range slider with explicit Start and End selectors.
+- Fixed Year-Month grouping so plots and tables display real `YYYY-MM` groups instead of collapsing into `Unknown`.
+- Fixed a Year-Month plotting error that could appear when a selected position had sparse or special time values.
 
 ### 2026-04-10
 
