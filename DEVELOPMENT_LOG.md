@@ -1,5 +1,23 @@
 # Development Log - FLU Divergence Explorer
 
+## Date: May 5, 2026
+
+### 1. Genetic Clade Explorer
+- **New Top-Level Tab:** Added a Genetic Clade tab between Gene-Wide Landscapes and Single Position Explorer for subtype-specific clade metadata exploration.
+- **Ranked Clade Selector:** Added clade annotation selection plus a searchable autocomplete clade/group selector with labels in the form `clade | rank #N | n=COUNT`.
+- **Missing-Value Filtering:** Excluded blank, `Unknown`, unassigned, and other unknown-like metadata values from clade choices and ranked summaries.
+- **Summary Cards:** Added cards for total sequences, rank/share within subtype, active period, and peak month/prevalence.
+- **Monthly Prevalence View:** Added a Plotly line/area prevalence chart with light count bars on a secondary axis, monthly hover details, and a range slider for longer time series.
+- **Metadata Breakdowns:** Added top country, region, and host breakdown plots plus a monthly detail table.
+
+### 2. Compact Metadata Cache
+- **Clade Summary Cache:** Extended `data/app_cache_flu.rds` with `metadata_clade_explorer`, storing compact summaries, monthly counts, subtype month totals, and top metadata breakdowns.
+- **Automatic Refresh:** Older caches missing Genetic Clade summaries are rebuilt from raw `metadata_merged_annotated.csv` files when available.
+- **Cache-Only Safety:** If a deployment has only an older cache and no raw metadata, the Genetic Clade tab shows a clear refresh notice instead of crashing.
+- **Selectize Fix:** Updated the clade/group selector client-side for this input to preserve autocomplete/dropdown labels and avoid stale selected options when switching annotations.
+
+---
+
 ## Date: April 28, 2026
 
 ### 1. DuckDB Data Backend

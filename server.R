@@ -2,6 +2,37 @@
 # 3. SERVER LOGIC
 # ==========================================
 server <- function(input, output, session) {
+
+  scalar_input <- function(x) {
+    if (is.null(x) || length(x) == 0) return(NULL)
+    if (is.list(x)) x <- unlist(x, recursive = TRUE, use.names = FALSE)
+    x <- as.character(x)
+    if (length(x) == 0 || is.na(x[[1]]) || identical(x[[1]], "")) return(NULL)
+    x[[1]]
+  }
+
+  `%||%` <- function(x, y) {
+    if (is.null(x) || length(x) == 0 || is.na(x[[1]]) || identical(x[[1]], "")) y else x
+  }
+
+  selectize_state <- new.env(parent = emptyenv())
+
+  update_selectize_if_changed <- function(input_id, choices, selected = NULL, server = TRUE) {
+    choice_values <- as.character(choices)
+    choice_names <- names(choices)
+    choice_key <- if (!is.null(choice_names)) {
+      paste(choice_names, choice_values, sep = "\t")
+    } else {
+      choice_values
+    }
+    selected_key <- scalar_input(selected) %||% "__NULL__"
+    key <- paste(c(choice_key, selected_key), collapse = "\r")
+    if (identical(selectize_state[[input_id]], key)) return(invisible(FALSE))
+    selectize_state[[input_id]] <- key
+    freezeReactiveValue(input, input_id)
+    updateSelectizeInput(session, input_id, choices = choices, selected = selected, server = server)
+    invisible(TRUE)
+  }
   
   # --- REACTIVE DATA SWITCH ---
   
@@ -54,6 +85,17 @@ server <- function(input, output, session) {
       waiter_hide()
     }, once = TRUE)
   }, ignoreInit = TRUE, priority = 100)
+
+  clade_explorer_available <- function() {
+    !is.null(metadata_clade_explorer$summaries) && nrow(metadata_clade_explorer$summaries) > 0
+  }
+
+  clade_annotation_label <- function(annotation) {
+    label <- gsub("_", " ", annotation)
+    label <- gsub("^clade$", "HA clade", label, ignore.case = TRUE)
+    label <- gsub("^G clade$", "NA clade", label, ignore.case = TRUE)
+    label
+  }
 
   available_genes <- reactive({
     req(input$global_subtype, input$variation_type)
@@ -662,6 +704,261 @@ server <- function(input, output, session) {
     } else {
       shinyjs::show("sp_quick_access_section")
     }
+  })
+
+  # ==========================================
+  # SERVER: GENETIC CLADE
+  # ==========================================
+
+  output$gc_status_notice <- renderUI({
+    if (clade_explorer_available()) return(NULL)
+    div(
+      class = "alert alert-warning",
+      tags$strong("Genetic Clade summary is not available. "),
+      "This view requires a refreshed metadata cache built from the subtype metadata CSV files. ",
+      "The rest of FLUExplorer can still run from the existing cache data."
+    )
+  })
+
+  gc_annotation_choices <- reactive({
+    if (!clade_explorer_available()) return(character(0))
+    req(input$global_subtype)
+    annotations <- metadata_clade_explorer$summaries %>%
+      filter(.data$Group == input$global_subtype) %>%
+      pull(.data$Annotation) %>%
+      unique() %>%
+      sort()
+    stats::setNames(annotations, vapply(annotations, clade_annotation_label, character(1)))
+  })
+
+  observeEvent(list(input$global_subtype, gc_annotation_choices()), {
+    choices <- gc_annotation_choices()
+    if (length(choices) == 0) {
+      updateSelectInput(session, "gc_annotation", choices = character(0), selected = NULL)
+      update_selectize_if_changed("gc_clade", choices = character(0), selected = NULL, server = FALSE)
+      return(invisible(NULL))
+    }
+    current <- scalar_input(input$gc_annotation)
+    selected <- if (!is.null(current) && current %in% unname(choices)) current else unname(choices)[[1]]
+    updateSelectInput(session, "gc_annotation", choices = choices, selected = selected)
+  }, ignoreInit = FALSE, priority = 100)
+
+  observeEvent(list(input$global_subtype, input$gc_annotation), {
+    if (!clade_explorer_available()) {
+      update_selectize_if_changed("gc_clade", choices = character(0), selected = NULL, server = FALSE)
+      return(invisible(NULL))
+    }
+
+    req(input$global_subtype)
+    annotation <- scalar_input(input$gc_annotation)
+    if (is.null(annotation)) {
+      choices <- gc_annotation_choices()
+      annotation <- if (length(choices) > 0) unname(choices)[[1]] else NULL
+    }
+    req(annotation)
+
+    choices_df <- metadata_clade_explorer$summaries %>%
+      filter(.data$Group == input$global_subtype, .data$Annotation == annotation) %>%
+      arrange(.data$Rank, .data$Clade)
+
+    if (nrow(choices_df) == 0) {
+      update_selectize_if_changed("gc_clade", choices = character(0), selected = NULL, server = FALSE)
+      return(invisible(NULL))
+    }
+
+    labels <- paste0(
+      choices_df$Clade,
+      " | rank #", choices_df$Rank,
+      " | n=", scales::comma(choices_df$StrainCount)
+    )
+    choices <- stats::setNames(choices_df$Clade, labels)
+    current_clade <- scalar_input(input$gc_clade)
+    selected <- if (!is.null(current_clade) && current_clade %in% choices_df$Clade) {
+      current_clade
+    } else {
+      choices_df$Clade[[1]]
+    }
+
+    update_selectize_if_changed("gc_clade", choices = choices, selected = selected, server = FALSE)
+  }, ignoreInit = FALSE, priority = 100)
+
+  gc_selected_summary <- reactive({
+    validate(need(clade_explorer_available(), "Refresh the metadata summary cache to use Genetic Clade."))
+    req(input$global_subtype)
+    annotation <- scalar_input(input$gc_annotation)
+    clade <- scalar_input(input$gc_clade)
+    req(annotation, clade)
+    out <- metadata_clade_explorer$summaries %>%
+      filter(.data$Group == input$global_subtype, .data$Annotation == annotation, .data$Clade == clade)
+    validate(need(nrow(out) > 0, "Choose a clade to explore."))
+    out %>% slice_head(n = 1)
+  })
+
+  gc_timeseries <- reactive({
+    summary_row <- gc_selected_summary()
+    selected_months <- metadata_clade_explorer$monthly %>%
+      filter(
+        .data$Group == summary_row$Group[[1]],
+        .data$Annotation == summary_row$Annotation[[1]],
+        .data$Clade == summary_row$Clade[[1]]
+      ) %>%
+      select(YearMonth, Count)
+
+    metadata_clade_explorer$month_totals %>%
+      filter(.data$Group == summary_row$Group[[1]]) %>%
+      left_join(selected_months, by = "YearMonth") %>%
+      mutate(
+        Count = dplyr::coalesce(.data$Count, 0L),
+        Percent = dplyr::if_else(.data$Total > 0, (.data$Count / .data$Total) * 100, 0)
+      ) %>%
+      arrange(.data$YearMonth)
+  })
+
+  output$gc_summary_cards <- renderUI({
+    summary_row <- gc_selected_summary()
+    period <- if (is.na(summary_row$FirstMonth[[1]]) || is.na(summary_row$LastMonth[[1]])) {
+      "Not available"
+    } else {
+      paste(summary_row$FirstMonth[[1]], "to", summary_row$LastMonth[[1]])
+    }
+    peak <- if (is.na(summary_row$PeakMonth[[1]])) {
+      "Not available"
+    } else {
+      paste0(summary_row$PeakMonth[[1]], " (", round(summary_row$PeakPercent[[1]], 2), "%)")
+    }
+
+    fluidRow(
+      column(
+        3,
+        div(class = "summary-card gc-summary-card",
+            div(class = "summary-card-title", "Total Sequences"),
+            div(class = "summary-card-value", scales::comma(summary_row$StrainCount[[1]])),
+            tags$p(class = "gc-summary-card-note", clade_annotation_label(summary_row$Annotation[[1]])))
+      ),
+      column(
+        3,
+        div(class = "summary-card gc-summary-card",
+            div(class = "summary-card-title", "Rank / Share"),
+            div(class = "summary-card-value", paste0("#", summary_row$Rank[[1]])),
+            tags$p(class = "gc-summary-card-note", paste0(round(summary_row$DatasetShare[[1]], 2), "% of subtype")))
+      ),
+      column(
+        3,
+        div(class = "summary-card gc-summary-card",
+            div(class = "summary-card-title", "Active Period"),
+            div(class = "summary-card-value", period),
+            tags$p(class = "gc-summary-card-note", "First to last month"))
+      ),
+      column(
+        3,
+        div(class = "summary-card gc-summary-card",
+            div(class = "summary-card-title", "Peak Month"),
+            div(class = "summary-card-value", peak),
+            tags$p(class = "gc-summary-card-note", "Highest monthly prevalence"))
+      )
+    )
+  })
+
+  output$gc_prevalence_plot <- renderPlotly({
+    summary_row <- gc_selected_summary()
+    df <- gc_timeseries()
+    validate(need(nrow(df) > 0, "No monthly prevalence data are available."))
+    annotation_label <- clade_annotation_label(summary_row$Annotation[[1]])
+    clade_label <- summary_row$Clade[[1]]
+
+    hover_text <- paste0(
+      "Month: ", df$YearMonth,
+      "<br>", annotation_label, ": ", clade_label,
+      "<br>Clade count: ", scales::comma(df$Count),
+      "<br>Total monthly sequences: ", scales::comma(df$Total),
+      "<br>Percent: ", round(df$Percent, 3), "%"
+    )
+
+    plot_ly() %>%
+      add_bars(
+        data = df,
+        x = ~YearMonth,
+        y = ~Count,
+        name = "Clade count",
+        yaxis = "y2",
+        marker = list(color = "rgba(89, 163, 168, 0.28)", line = list(color = "rgba(89, 163, 168, 0.45)", width = 0.5)),
+        text = hover_text,
+        hoverinfo = "text"
+      ) %>%
+      add_trace(
+        data = df,
+        x = ~YearMonth,
+        y = ~Percent,
+        name = "Monthly prevalence",
+        type = "scatter",
+        mode = "lines+markers",
+        fill = "tozeroy",
+        fillcolor = "rgba(41, 128, 185, 0.12)",
+        line = list(color = "#2980b9", width = 2.5),
+        marker = list(color = "#2980b9", size = 6),
+        text = hover_text,
+        hoverinfo = "text"
+      ) %>%
+      layout(
+        barmode = "overlay",
+        xaxis = list(title = "Year-Month", rangeslider = list(visible = nrow(df) > 24)),
+        yaxis = list(title = "Percent of monthly sequences", ticksuffix = "%", rangemode = "tozero"),
+        yaxis2 = list(title = "Clade count", overlaying = "y", side = "right", showgrid = FALSE, rangemode = "tozero"),
+        legend = list(orientation = "h", x = 0, y = 1.12),
+        margin = list(l = 70, r = 75, b = 80, t = 40)
+      ) %>%
+      config(displayModeBar = FALSE)
+  })
+
+  gc_breakdown_data <- function(category) {
+    summary_row <- gc_selected_summary()
+    metadata_clade_explorer$breakdowns %>%
+      filter(
+        .data$Group == summary_row$Group[[1]],
+        .data$Annotation == summary_row$Annotation[[1]],
+        .data$Clade == summary_row$Clade[[1]],
+        .data$Category == category
+      ) %>%
+      arrange(.data$Count) %>%
+      mutate(Value = factor(.data$Value, levels = .data$Value))
+  }
+
+  render_gc_breakdown_plot <- function(category, label, color) {
+    renderPlotly({
+      df <- gc_breakdown_data(category)
+      validate(need(nrow(df) > 0, paste("No", tolower(label), "summary is available.")))
+      plot_ly(
+        df,
+        x = ~Count,
+        y = ~Value,
+        type = "bar",
+        orientation = "h",
+        marker = list(color = color),
+        text = ~paste0(label, ": ", Value, "<br>Count: ", scales::comma(Count)),
+        hoverinfo = "text"
+      ) %>%
+        layout(
+          xaxis = list(title = "Sequences"),
+          yaxis = list(title = ""),
+          margin = list(l = 110, r = 15, b = 45, t = 10)
+        ) %>%
+        config(displayModeBar = FALSE)
+    })
+  }
+
+  output$gc_country_plot <- render_gc_breakdown_plot("country", "Country", "#4E79A7")
+  output$gc_region_plot <- render_gc_breakdown_plot("region", "Region", "#59A3A8")
+  output$gc_host_plot <- render_gc_breakdown_plot("host", "Host", "#F28E2B")
+
+  output$gc_monthly_table <- renderDT({
+    gc_timeseries() %>%
+      transmute(
+        `Year-Month` = YearMonth,
+        `Clade Count` = Count,
+        `Total Monthly Sequences` = Total,
+        `Percent (%)` = round(Percent, 3)
+      ) %>%
+      datatable(options = list(pageLength = 12, autoWidth = TRUE), rownames = FALSE)
   })
   
   # ==========================================

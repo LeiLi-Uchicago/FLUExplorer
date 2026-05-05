@@ -124,6 +124,46 @@ ui <- navbarPage(
       .info-markdown td + td {
         border-left: 1px solid #ecf0f1;
       }
+      .summary-card {
+        background: #ffffff;
+        border: 1px solid #dbe4ee;
+        border-radius: 8px;
+        min-height: 120px;
+        padding: 18px 14px;
+        text-align: center;
+        box-shadow: 0 1px 3px rgba(32,56,85,0.08);
+      }
+      .summary-card-title {
+        font-size: 17px;
+        font-weight: 700;
+        color: #34495e;
+        margin-bottom: 10px;
+      }
+      .summary-card-value {
+        font-size: 30px;
+        font-weight: 800;
+        color: #2980b9;
+        line-height: 1.15;
+      }
+      .gc-summary-card {
+        height: 150px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+      .gc-summary-card-note {
+        min-height: 20px;
+        margin: 8px 0 0 0;
+        color: #5f6c7b;
+        font-size: 13px;
+      }
+      .dashboard-section-title {
+        font-size: 18px;
+        font-weight: 700;
+        color: #2f3e4f;
+        margin: 16px 0 8px 0;
+      }
     ")),
     # Fixed positioned container for the switch
     div(class = "variation-switch-container",
@@ -253,7 +293,7 @@ ui <- navbarPage(
   # ---------------------------------------------------------
   # MACRO-LEVEL DROPDOWN MENU
   # ---------------------------------------------------------
-  navbarMenu("Gene-Wide Landscapes",
+  # navbarMenu("Gene-Wide Landscapes",
              
              tabPanel("Conservation (Entropy)",
                       fluidPage(
@@ -275,28 +315,28 @@ ui <- navbarPage(
                         withWaiter(plotlyOutput("ent_plot", height = "450px")) 
                       )
              ),
-             
-             tabPanel("Mutation Tracker (Lollipop)",
-                      fluidPage(
-                        wellPanel(
-                          fluidRow(
-                            column(3, helpText("Visualize fixed amino acid mutations in a Target Group compared to a Reference Group. Subtype is controlled globally.")),
-                            column(3, selectInput("lol_group_by", "Group by:", choices = NULL)),
-                            column(3, selectInput("lol_gene", "Gene:", choices = NULL)),
-                            column(3, numericInput("lol_min_freq", "Min Dominant Freq (%):", value = 90.0, min = 50.0, max = 100.0))
-                          ),
-                          fluidRow(
-                            column(3, selectInput("lol_ref_group", "Reference Group:", choices = NULL)),
-                            column(3, selectInput("lol_tar_group", "Target Group:", choices = NULL)),
-                            column(2, sliderInput("lol_font_size", "Font Size:", min = 10, max = 24, value = 14, step = 1)),
-                            column(2, radioButtons("lol_plot_format", "Format:", choices = c("PNG", "PDF"), inline = TRUE)),
-                            column(2, downloadButton("downloadLolPlot", "Download Plot", class = "btn-info", style="margin-top: 25px; width: 100%;"))
-                          )
-                        ),
-                        h3(textOutput("lol_plot_title")),
-                        withWaiter(plotlyOutput("lol_plot", height = "550px")) 
-                      )
-             ),
+             # 
+             # tabPanel("Mutation Tracker (Lollipop)",
+             #          fluidPage(
+             #            wellPanel(
+             #              fluidRow(
+             #                column(3, helpText("Visualize fixed amino acid mutations in a Target Group compared to a Reference Group. Subtype is controlled globally.")),
+             #                column(3, selectInput("lol_group_by", "Group by:", choices = NULL)),
+             #                column(3, selectInput("lol_gene", "Gene:", choices = NULL)),
+             #                column(3, numericInput("lol_min_freq", "Min Dominant Freq (%):", value = 90.0, min = 50.0, max = 100.0))
+             #              ),
+             #              fluidRow(
+             #                column(3, selectInput("lol_ref_group", "Reference Group:", choices = NULL)),
+             #                column(3, selectInput("lol_tar_group", "Target Group:", choices = NULL)),
+             #                column(2, sliderInput("lol_font_size", "Font Size:", min = 10, max = 24, value = 14, step = 1)),
+             #                column(2, radioButtons("lol_plot_format", "Format:", choices = c("PNG", "PDF"), inline = TRUE)),
+             #                column(2, downloadButton("downloadLolPlot", "Download Plot", class = "btn-info", style="margin-top: 25px; width: 100%;"))
+             #              )
+             #            ),
+             #            h3(textOutput("lol_plot_title")),
+             #            withWaiter(plotlyOutput("lol_plot", height = "550px")) 
+             #          )
+             # ),
              
             #  # TAB 5: CONSENSUS MSA (FULL-WIDTH LAYOUT)
             #  tabPanel("Consensus MSA Map",
@@ -317,6 +357,58 @@ ui <- navbarPage(
             #             )
             #           )
             #  )
+  # ),
+
+  # ---------------------------------------------------------
+  # TAB 1B: GENETIC CLADE
+  # ---------------------------------------------------------
+  tabPanel("Genetic Clade",
+           fluidPage(
+             wellPanel(
+               fluidRow(
+                 column(4, selectInput("gc_annotation", "Clade annotation:", choices = NULL)),
+                 column(
+                   8,
+                   selectizeInput(
+                     "gc_clade",
+                     "Clade / group:",
+                     choices = NULL,
+                     selected = NULL,
+                     options = list(
+                       placeholder = "Type to search or choose a clade",
+                       maxOptions = 500,
+                       maxItems = 1,
+                       create = FALSE,
+                       searchField = c("label", "value"),
+                       openOnFocus = TRUE,
+                       closeAfterSelect = TRUE
+                     )
+                   )
+                 )
+               )
+             ),
+             uiOutput("gc_status_notice"),
+             uiOutput("gc_summary_cards"),
+             fluidRow(
+               column(
+                 12,
+                 div(class = "dashboard-section-title", "Monthly Clade Prevalence"),
+                 withWaiter(plotlyOutput("gc_prevalence_plot", height = "430px"))
+               )
+             ),
+             fluidRow(
+               column(4, div(class = "dashboard-section-title", "Top Countries"), withWaiter(plotlyOutput("gc_country_plot", height = "300px"))),
+               column(4, div(class = "dashboard-section-title", "Top Regions"), withWaiter(plotlyOutput("gc_region_plot", height = "300px"))),
+               column(4, div(class = "dashboard-section-title", "Top Hosts"), withWaiter(plotlyOutput("gc_host_plot", height = "300px")))
+             ),
+             fluidRow(
+               column(
+                 12,
+                 div(class = "dashboard-section-title", "Monthly Detail"),
+                 DTOutput("gc_monthly_table")
+               )
+             )
+           )
   ),
   
   # ---------------------------------------------------------

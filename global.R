@@ -33,6 +33,137 @@ RDS_CACHE <- "data/app_cache_flu.rds"
 DUCKDB_CACHE <- "data/flu_explorer.duckdb"
 DUCKDB_META_CACHE <- "data/flu_explorer_duckdb_meta.rds"
 
+empty_metadata_clade_explorer <- function() {
+  list(
+    month_totals = tibble::tibble(),
+    summaries = tibble::tibble(),
+    monthly = tibble::tibble(),
+    breakdowns = tibble::tibble()
+  )
+}
+
+is_unknown_metadata_value <- function(value) {
+  text <- stringr::str_squish(as.character(value))
+  is.na(text) | text == "" | stringr::str_to_lower(text) %in% c(
+    "unknown", "na", "n/a", "none", "null", "?", "unassigned", "not assigned",
+    "trace 0", "undetermined", "not determined"
+  )
+}
+
+build_metadata_clade_explorer_summary <- function(metadata, annotation_cols) {
+  annotation_cols <- annotation_cols[annotation_cols %in% names(metadata)]
+
+  for (column in c(annotation_cols, "Group", "YM", "region", "country", "Host")) {
+    if (!column %in% names(metadata)) metadata[[column]] <- NA_character_
+  }
+
+  month_totals <- metadata %>%
+    filter(!is.na(.data$YM), .data$YM != "") %>%
+    count(Group, YearMonth = .data$YM, name = "Total") %>%
+    arrange(Group, YearMonth)
+
+  if (length(annotation_cols) == 0 || nrow(metadata) == 0) {
+    out <- empty_metadata_clade_explorer()
+    out$month_totals <- month_totals
+    return(out)
+  }
+
+  subtype_totals <- metadata %>%
+    count(Group, name = "SubtypeTotal")
+
+  base <- purrr::map_dfr(annotation_cols, function(annotation) {
+    metadata %>%
+      transmute(
+        Group = as.character(.data$Group),
+        Annotation = annotation,
+        Clade = as.character(.data[[annotation]]),
+        YearMonth = as.character(.data$YM),
+        region = as.character(.data$region),
+        country = as.character(.data$country),
+        host = as.character(.data$Host)
+      ) %>%
+      filter(!is_unknown_metadata_value(.data$Clade))
+  })
+
+  if (nrow(base) == 0) {
+    out <- empty_metadata_clade_explorer()
+    out$month_totals <- month_totals
+    return(out)
+  }
+
+  monthly <- base %>%
+    filter(!is.na(.data$YearMonth), .data$YearMonth != "") %>%
+    count(Group, Annotation, Clade, YearMonth, name = "Count") %>%
+    left_join(month_totals, by = c("Group", "YearMonth")) %>%
+    mutate(
+      Total = dplyr::coalesce(.data$Total, 0L),
+      Percent = dplyr::if_else(.data$Total > 0, (.data$Count / .data$Total) * 100, 0)
+    ) %>%
+    arrange(Group, Annotation, Clade, YearMonth)
+
+  totals <- base %>%
+    count(Group, Annotation, Clade, name = "StrainCount") %>%
+    left_join(subtype_totals, by = "Group") %>%
+    arrange(Group, Annotation, desc(StrainCount), Clade) %>%
+    group_by(Group, Annotation) %>%
+    mutate(
+      Rank = row_number(),
+      DatasetShare = dplyr::if_else(.data$SubtypeTotal > 0, (.data$StrainCount / .data$SubtypeTotal) * 100, 0)
+    ) %>%
+    ungroup() %>%
+    select(-SubtypeTotal)
+
+  periods <- base %>%
+    filter(!is.na(.data$YearMonth), .data$YearMonth != "") %>%
+    group_by(Group, Annotation, Clade) %>%
+    summarise(
+      FirstMonth = min(.data$YearMonth),
+      LastMonth = max(.data$YearMonth),
+      .groups = "drop"
+    )
+
+  peaks <- monthly %>%
+    group_by(Group, Annotation, Clade) %>%
+    arrange(desc(.data$Percent), desc(.data$Count), .data$YearMonth, .by_group = TRUE) %>%
+    slice_head(n = 1) %>%
+    ungroup() %>%
+    transmute(
+      Group,
+      Annotation,
+      Clade,
+      PeakMonth = YearMonth,
+      PeakCount = Count,
+      PeakPercent = Percent
+    )
+
+  summaries <- totals %>%
+    left_join(periods, by = c("Group", "Annotation", "Clade")) %>%
+    left_join(peaks, by = c("Group", "Annotation", "Clade")) %>%
+    arrange(Group, Annotation, Rank)
+
+  breakdowns <- purrr::map_dfr(c("country", "region", "host"), function(category) {
+    base %>%
+      filter(!is_unknown_metadata_value(.data[[category]])) %>%
+      count(Group, Annotation, Clade, Category = category, Value = .data[[category]], name = "Count") %>%
+      group_by(Group, Annotation, Clade, Category) %>%
+      arrange(desc(.data$Count), .data$Value, .by_group = TRUE) %>%
+      mutate(Rank = row_number()) %>%
+      filter(.data$Rank <= 10) %>%
+      ungroup()
+  })
+
+  list(
+    month_totals = month_totals,
+    summaries = summaries,
+    monthly = monthly,
+    breakdowns = breakdowns
+  )
+}
+
+raw_metadata_available <- function(subtypes = SUBTYPES) {
+  length(subtypes) > 0 && any(file.exists(file.path("data", subtypes, "metadata_merged_annotated.csv")))
+}
+
 normalize_year_month_filter <- function(year, month) {
   year_chr <- trimws(as.character(year))
   month_chr <- trimws(as.character(month))
@@ -221,19 +352,28 @@ if (file.exists(RDS_CACHE)) {
   # Check if the lightweight cache is present
   required_objects <- c("metadata_summary_stats", "important_pos_df", "metadata_grouping_cols")
   if (all(required_objects %in% names(cache))) {
-    total_raw          <- cache$total_raw
-    total_parsed       <- cache$total_parsed
-    important_pos_df       <- cache$important_pos_df
-    metadata_summary_stats <- cache$metadata_summary_stats
-    total_countries_val    <- cache$total_countries_val
-    time_range_val         <- cache$time_range_val
-    metadata_groups        <- cache$metadata_groups
-    metadata_years         <- cache$metadata_years
-    metadata_grouping_cols <- cache$metadata_grouping_cols
-    
-    rm(cache)   # free the wrapper list from memory
-    message("RDS cache loaded successfully.")
-    cache_loaded <- TRUE
+    if (!"metadata_clade_explorer" %in% names(cache) && raw_metadata_available()) {
+      message("RDS cache is missing Genetic Clade summaries. Rebuilding from raw metadata...")
+      cache_loaded <- FALSE
+    } else {
+      total_raw          <- cache$total_raw
+      total_parsed       <- cache$total_parsed
+      important_pos_df       <- cache$important_pos_df
+      metadata_summary_stats <- cache$metadata_summary_stats
+      total_countries_val    <- cache$total_countries_val
+      time_range_val         <- cache$time_range_val
+      metadata_groups        <- cache$metadata_groups
+      metadata_years         <- cache$metadata_years
+      metadata_grouping_cols <- cache$metadata_grouping_cols
+      metadata_clade_explorer <- cache$metadata_clade_explorer
+      if (is.null(metadata_clade_explorer)) {
+        metadata_clade_explorer <- empty_metadata_clade_explorer()
+      }
+
+      rm(cache)   # free the wrapper list from memory
+      message("RDS cache loaded successfully.")
+      cache_loaded <- TRUE
+    }
   } else {
     message("RDS cache is outdated. Rebuilding...")
     cache_loaded <- FALSE
@@ -397,6 +537,8 @@ if (!cache_loaded) {
   metadata_summary_stats <- metadata_global %>%
     group_by(across(all_of(c("Year", "Group", "region", "country", metadata_grouping_cols)))) %>%
     summarise(n = n(), .groups = "drop")
+
+  metadata_clade_explorer <- build_metadata_clade_explorer_summary(metadata_global, metadata_grouping_cols)
   
   total_countries_val <- length(unique(metadata_global$country))
   time_range_val <- paste(min(metadata_global$Year, na.rm=T), "-", max(metadata_global$Year, na.rm=T))
@@ -416,7 +558,8 @@ if (!cache_loaded) {
       time_range_val         = time_range_val,
       metadata_groups        = metadata_groups,
       metadata_years         = metadata_years,
-      metadata_grouping_cols = metadata_grouping_cols
+      metadata_grouping_cols = metadata_grouping_cols,
+      metadata_clade_explorer = metadata_clade_explorer
     ),
     file = RDS_CACHE
   )
@@ -424,6 +567,10 @@ if (!cache_loaded) {
   # --- STARTUP MEMORY FLUSH ---
   suppressWarnings(rm(all_metadata, metadata_global, meta))
   gc(verbose = FALSE)
+}
+
+if (!exists("metadata_clade_explorer") || is.null(metadata_clade_explorer)) {
+  metadata_clade_explorer <- empty_metadata_clade_explorer()
 }
 
 duckdb_cache_ready <- ensure_usage_duckdb_cache()

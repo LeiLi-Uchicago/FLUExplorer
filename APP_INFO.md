@@ -26,6 +26,10 @@ Data were sourced from GISAID, with all sequences annotated via Nextclade 3. The
 
 ## Update Log
 
+### 2026-05-05
+
+- Added the Genetic Clade tab. Users can select a subtype-specific clade annotation, search ranked clade/group choices, and review clade-level summary statistics.
+
 ### 2026-04-28
 
 - Added DuckDB-backed usage table loading to reduce memory pressure from large amino acid and nucleotide tables. When DuckDB is available, FLUExplorer now queries only the selected subtype, gene, position, grouping, and time range instead of loading full tables into memory.
