@@ -99,7 +99,7 @@ server <- function(input, output, session) {
 
   available_genes <- reactive({
     req(input$global_subtype, input$variation_type)
-    genes <- list.dirs(paste0("data/", input$global_subtype, "/", input$variation_type, "/"), full.names = FALSE, recursive = FALSE)
+    genes <- available_count_genes(input$global_subtype, input$variation_type, prefer_cache = TRUE)
     sort(genes)
   })
   
@@ -121,8 +121,8 @@ server <- function(input, output, session) {
       if (!is.null(res) && nrow(res) > 0) return(res)
     }
     
-    dir_path <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$sp_gene, "/")
-    rds_file <- paste0(dir_path, var_lower, "_usage_by_HA_clade.rds")
+    dir_path <- count_cache_gene_path(input$global_subtype, input$variation_type, input$sp_gene)
+    rds_file <- count_cache_file_path(input$global_subtype, input$variation_type, input$sp_gene, "HA_clade")
     
     # Fallback to the first available group file if HA_clade is not available
     if (!file.exists(rds_file)) {
@@ -130,7 +130,7 @@ server <- function(input, output, session) {
       # Exclude Year/Month files for the 'by_clade' fallback
       files <- setdiff(files, c(paste0(var_lower, "_usage_by_Year.rds"), paste0(var_lower, "_usage_by_Year_Month.rds")))
       if (length(files) > 0) {
-        rds_file <- paste0(dir_path, files[1])
+        rds_file <- file.path(dir_path, files[1])
       }
     }
     
@@ -218,10 +218,7 @@ server <- function(input, output, session) {
       return(usage_year_month_choices(input$global_subtype, input$variation_type, input$sp_gene, input$sp_group_by, pos))
     }
 
-    rds_file <- paste0(
-      "data/", input$global_subtype, "/", input$variation_type, "/", input$sp_gene, "/",
-      tolower(input$variation_type), "_usage_by_", input$sp_group_by, ".rds"
-    )
+    rds_file <- count_cache_file_path(input$global_subtype, input$variation_type, input$sp_gene, input$sp_group_by)
     data <- get_lazy_table(rds_file)
 
     if (is.null(data) || !all(c("Year", "Month") %in% colnames(data))) return(character(0))
@@ -380,10 +377,7 @@ server <- function(input, output, session) {
   }
 
   get_pairwise_rds_file <- function(gene, group_by = input$pw_group_by) {
-    paste0(
-      "data/", input$global_subtype, "/", input$variation_type, "/", gene, "/",
-      tolower(input$variation_type), "_usage_by_", group_by, ".rds"
-    )
+    count_cache_file_path(input$global_subtype, input$variation_type, gene, group_by)
   }
 
   load_pairwise_gene_data <- function(gene, group_by = input$pw_group_by) {
@@ -544,7 +538,7 @@ server <- function(input, output, session) {
     }
 
     var_lower <- tolower(input$variation_type)
-    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$ent_gene, "/", var_lower, "_usage_by_", input$ent_group_by, ".rds")
+    rds_file <- count_cache_file_path(input$global_subtype, input$variation_type, input$ent_gene, input$ent_group_by)
     
     df <- get_lazy_table(rds_file)
     if (!is.null(df)) {
@@ -569,7 +563,7 @@ server <- function(input, output, session) {
     }
 
     var_lower <- tolower(input$variation_type)
-    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$lol_gene, "/", var_lower, "_usage_by_", input$lol_group_by, ".rds")
+    rds_file <- count_cache_file_path(input$global_subtype, input$variation_type, input$lol_gene, input$lol_group_by)
     
     df <- get_lazy_table(rds_file)
     if (!is.null(df)) {
@@ -605,7 +599,7 @@ server <- function(input, output, session) {
     req(input$global_subtype, input$variation_type, input$pw_group_by)
     
     # Fast path: Check one gene instead of evaluating pairwise_usage_data() which eagerly loads all genes
-    genes <- list.dirs(paste0("data/", input$global_subtype, "/", input$variation_type, "/"), full.names = FALSE, recursive = FALSE)
+    genes <- available_count_genes(input$global_subtype, input$variation_type, prefer_cache = TRUE)
     if(length(genes) == 0) return()
     gene <- if("HA" %in% genes) "HA" else genes[1]
 
@@ -617,7 +611,7 @@ server <- function(input, output, session) {
       return()
     }
     
-    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", gene, "/", tolower(input$variation_type), "_usage_by_", input$pw_group_by, ".rds")
+    rds_file <- count_cache_file_path(input$global_subtype, input$variation_type, gene, input$pw_group_by)
     df <- get_lazy_table(rds_file)
     if(is.null(df)) return()
     
@@ -646,7 +640,7 @@ server <- function(input, output, session) {
       return()
     }
     
-    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$ent_gene, "/", tolower(input$variation_type), "_usage_by_", input$ent_group_by, ".rds")
+    rds_file <- count_cache_file_path(input$global_subtype, input$variation_type, input$ent_gene, input$ent_group_by)
     df <- get_lazy_table(rds_file)
     if(is.null(df)) return()
     
@@ -667,7 +661,7 @@ server <- function(input, output, session) {
       return()
     }
     
-    rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", input$lol_gene, "/", tolower(input$variation_type), "_usage_by_", input$lol_group_by, ".rds")
+    rds_file <- count_cache_file_path(input$global_subtype, input$variation_type, input$lol_gene, input$lol_group_by)
     df <- get_lazy_table(rds_file)
     if(is.null(df)) return()
     
@@ -969,41 +963,49 @@ server <- function(input, output, session) {
   output$total_countries <- renderText({ paste0(total_countries_val) })
   output$time_range <- renderText({ time_range_val })
 
+  metadata_plot_label <- function(col, subtype = NULL) {
+    if (identical(col, "clade") && identical(subtype, "B_YAM")) return("Yamagata Clade")
+    if (identical(col, "clade") && identical(subtype, "B_VIC")) return("Victoria Clade")
+    if (identical(col, "clade")) return("HA Clade")
+    if (identical(col, "G_clade")) return("NA Clade")
+    label <- gsub("_", " ", col)
+    label <- gsub("HA ", "HA ", label, fixed = TRUE)
+    label <- gsub("NA ", "NA ", label, fixed = TRUE)
+    label <- gsub("clade", "Clade", label, ignore.case = TRUE)
+    label
+  }
+
   # --- DYNAMIC CLADE PLOT FILL DROPDOWN ---
   observeEvent(input$clade_plot_subtype, {
     req(input$clade_plot_subtype)
-    
-    # Find valid groups for this subtype by scanning a sample gene directory (HA)
-    sample_gene <- "HA"
-    gene_for_groups <- sample_gene
-    dir_path <- paste0("data/", input$clade_plot_subtype, "/AA/", sample_gene, "/")
-    if (!dir.exists(dir_path)) {
-       # Fallback to first available gene
-       genes <- list.dirs(paste0("data/", input$clade_plot_subtype, "/AA/"), full.names = FALSE, recursive = FALSE)
-       if (length(genes) > 0) {
-         gene_for_groups <- genes[1]
-         dir_path <- paste0("data/", input$clade_plot_subtype, "/AA/", gene_for_groups, "/")
-       }
+
+    subtype_summary <- metadata_summary_stats %>%
+      filter(.data$Group == input$clade_plot_subtype)
+
+    informative_meta_cols <- metadata_grouping_cols[
+      vapply(metadata_grouping_cols, function(col) {
+        if (!col %in% names(subtype_summary)) return(FALSE)
+        values <- unique(as.character(subtype_summary[[col]]))
+        any(!is_unknown_metadata_value(values))
+      }, logical(1))
+    ]
+
+    choices <- c(
+      stats::setNames(
+        informative_meta_cols,
+        vapply(informative_meta_cols, metadata_plot_label, character(1), subtype = input$clade_plot_subtype)
+      ),
+      c("Region" = "region", "Country" = "country")
+    )
+
+    current_sel <- if (!is.null(input$clade_plot_fill) && input$clade_plot_fill %in% unname(choices)) {
+      input$clade_plot_fill
+    } else if ("clade" %in% unname(choices)) {
+      "clade"
+    } else {
+      unname(choices)[1]
     }
-    
-    if (dir.exists(dir_path)) {
-      all_usage_groups <- usage_available_groups(input$clade_plot_subtype, "AA", gene_for_groups)
-      
-      valid_groups <- setdiff(all_usage_groups, c("Year", "Year_Month"))
-      
-      # Map usage group names to their respective metadata columns
-      meta_cols <- valid_groups
-      meta_cols[meta_cols == "HA_clade"] <- "clade"
-      meta_cols[meta_cols == "NA_clade"] <- "G_clade"
-      
-      display_names <- gsub("_", " ", valid_groups)
-      display_names <- gsub("clade", "Clade", display_names, ignore.case = TRUE)
-      
-      choices <- c(setNames(meta_cols, display_names), c("Region" = "region", "Country" = "country"))
-      
-      current_sel <- if (!is.null(input$clade_plot_fill) && input$clade_plot_fill %in% choices) input$clade_plot_fill else choices[1]
-      updateSelectInput(session, "clade_plot_fill", choices = choices, selected = current_sel)
-    }
+    updateSelectInput(session, "clade_plot_fill", choices = choices, selected = current_sel)
   })
 
   # --- REACTIVE MAP DATA ---
@@ -1218,8 +1220,7 @@ server <- function(input, output, session) {
       return()
     }
     
-    var_lower <- tolower(var_type)
-    rds_file <- paste0("data/", subtype, "/", var_type, "/", gene, "/", var_lower, "_usage_by_", group_col, ".rds")
+    rds_file <- count_cache_file_path(subtype, var_type, gene, group_col)
     data <- get_lazy_table(rds_file)
     
     # Handle cases where data is missing or inconsistent
@@ -1642,14 +1643,14 @@ server <- function(input, output, session) {
     
     # --- FAST SANITY CHECK ---
     # Prevent premature execution: If the group changed, wait for the clade dropdowns to update first.
-    genes <- list.dirs(paste0("data/", input$global_subtype, "/", input$variation_type, "/"), full.names = FALSE, recursive = FALSE)
+    genes <- available_count_genes(input$global_subtype, input$variation_type, prefer_cache = TRUE)
     if(length(genes) > 0) {
       gene <- if("HA" %in% genes) "HA" else genes[1]
       if (usage_duckdb_available()) {
         valid_clades <- usage_distinct_group_values(input$global_subtype, input$variation_type, gene, input$pw_group_by)
         if(length(valid_clades) > 0 && (!(input$pw_clade1 %in% c("", valid_clades)) || !(input$pw_clade2 %in% c("", valid_clades)))) return()
       } else {
-      rds_file <- paste0("data/", input$global_subtype, "/", input$variation_type, "/", gene, "/", tolower(input$variation_type), "_usage_by_", input$pw_group_by, ".rds")
+      rds_file <- count_cache_file_path(input$global_subtype, input$variation_type, gene, input$pw_group_by)
       df <- get_lazy_table(rds_file)
       if(!is.null(df)) {
         valid_clades <- if(input$pw_group_by %in% colnames(df)) unique(as.character(df[[input$pw_group_by]])) else if("Clade" %in% colnames(df)) unique(as.character(df$Clade)) else "Unknown"

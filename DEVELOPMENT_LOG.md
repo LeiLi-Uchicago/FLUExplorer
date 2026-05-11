@@ -1,5 +1,17 @@
 # Development Log - FLU Divergence Explorer
 
+## Date: May 11, 2026
+
+### 1. Raw Data Layout Migration
+- **New Raw Data Root:** Updated metadata and count-table discovery for the reorganized `data/raw/<subtype>/` layout.
+- **Count Folder Support:** Updated count-table loading to read protein-specific files from `data/raw/<subtype>/count/<protein>/`.
+- **Generated Cache Separation:** Added path helpers so generated legacy count `.rds` files, when needed, are written under `data/count_cache/` instead of back into the raw data folders.
+- **Cache Freshness Checks:** Added raw CSV modification-time checks so compact RDS and DuckDB caches rebuild when reorganized or updated raw data are newer than existing caches.
+- **Validation Column Exclusion:** Dropped `CodonStatus` and `CodonSource` before writing app caches while preserving `Codon` as the app-facing `Codon_Usage` field.
+- **Mode-Aware Gene Discovery:** Restricted gene discovery by actual `aa_usage_by_*` or `nt_usage_by_*` files so AA-only raw data no longer exposes empty NT protein options.
+
+---
+
 ## Date: May 5, 2026
 
 ### 1. Genetic Clade Explorer

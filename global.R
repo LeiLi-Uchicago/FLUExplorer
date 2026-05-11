@@ -32,6 +32,74 @@ options(scipen = 999)
 RDS_CACHE <- "data/app_cache_flu.rds"
 DUCKDB_CACHE <- "data/flu_explorer.duckdb"
 DUCKDB_META_CACHE <- "data/flu_explorer_duckdb_meta.rds"
+RAW_DATA_DIR <- "data/raw"
+COUNT_RDS_CACHE_DIR <- "data/count_cache"
+VALIDATION_ONLY_COUNT_COLS <- c("CodonStatus", "CodonSource")
+
+metadata_file_path <- function(subtype) {
+  file.path(RAW_DATA_DIR, subtype, "metadata_merged_annotated.csv")
+}
+
+count_root_path <- function(subtype, var_type = "AA") {
+  raw_count_root <- file.path(RAW_DATA_DIR, subtype, "count")
+  legacy_root <- file.path("data", subtype, var_type)
+  if (dir.exists(raw_count_root)) raw_count_root else legacy_root
+}
+
+count_cache_root_path <- function(subtype, var_type = "AA") {
+  file.path(COUNT_RDS_CACHE_DIR, subtype, var_type)
+}
+
+count_cache_gene_path <- function(subtype, var_type, gene) {
+  file.path(count_cache_root_path(subtype, var_type), gene)
+}
+
+count_cache_file_path <- function(subtype, var_type, gene, group_by) {
+  file.path(count_cache_gene_path(subtype, var_type, gene), paste0(tolower(var_type), "_usage_by_", group_by, ".rds"))
+}
+
+raw_count_file_path <- function(subtype, var_type, gene, group_by) {
+  file.path(count_root_path(subtype, var_type), gene, paste0(tolower(var_type), "_usage_by_", group_by, ".csv"))
+}
+
+count_gene_dirs <- function(subtype, var_type = "AA", prefer_cache = FALSE) {
+  prefix <- paste0(tolower(var_type), "_usage_by_")
+  roots <- if (isTRUE(prefer_cache)) {
+    c(count_cache_root_path(subtype, var_type), count_root_path(subtype, var_type))
+  } else {
+    c(count_root_path(subtype, var_type), count_cache_root_path(subtype, var_type))
+  }
+  roots <- roots[dir.exists(roots)]
+  if (length(roots) == 0) return(character(0))
+  dirs <- unlist(lapply(roots, list.dirs, full.names = TRUE, recursive = FALSE), use.names = FALSE)
+  dirs <- dirs[basename(dirs) != ".DS_Store"]
+  dirs <- dirs[vapply(dirs, function(path) {
+    length(list.files(path, pattern = paste0("^", prefix, ".*\\.(csv|rds)$"))) > 0
+  }, logical(1))]
+  dirs[!duplicated(basename(dirs))]
+}
+
+available_count_genes <- function(subtype, var_type = "AA", prefer_cache = FALSE) {
+  sort(unique(basename(count_gene_dirs(subtype, var_type, prefer_cache = prefer_cache))))
+}
+
+latest_raw_data_mtime <- function() {
+  files <- list.files(RAW_DATA_DIR, pattern = "\\.csv$", full.names = TRUE, recursive = TRUE)
+  if (length(files) == 0) return(as.POSIXct(NA))
+  max(file.info(files)$mtime, na.rm = TRUE)
+}
+
+cache_older_than_raw_data <- function(cache_path) {
+  if (!file.exists(cache_path)) return(TRUE)
+  raw_mtime <- latest_raw_data_mtime()
+  if (is.na(raw_mtime)) return(FALSE)
+  cache_mtime <- file.info(cache_path)$mtime
+  is.na(cache_mtime) || cache_mtime < raw_mtime
+}
+
+strip_validation_count_cols <- function(df) {
+  df[, setdiff(names(df), VALIDATION_ONLY_COUNT_COLS), drop = FALSE]
+}
 
 empty_metadata_clade_explorer <- function() {
   list(
@@ -161,7 +229,7 @@ build_metadata_clade_explorer_summary <- function(metadata, annotation_cols) {
 }
 
 raw_metadata_available <- function(subtypes = SUBTYPES) {
-  length(subtypes) > 0 && any(file.exists(file.path("data", subtypes, "metadata_merged_annotated.csv")))
+  length(subtypes) > 0 && any(file.exists(vapply(subtypes, metadata_file_path, character(1))))
 }
 
 normalize_year_month_filter <- function(year, month) {
@@ -197,6 +265,7 @@ empty_usage_duckdb_df <- function() {
 }
 
 normalize_usage_table <- function(df, subtype, var_type, gene_name, group_name) {
+  df <- strip_validation_count_cols(df)
   df <- df %>%
     dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
     mutate(Group = subtype)
@@ -221,6 +290,7 @@ normalize_usage_table <- function(df, subtype, var_type, gene_name, group_name) 
   }
   if (!group_name %in% names(df)) df[[group_name]] <- "Unknown"
   if (group_name == "Year_Month") df[[group_name]] <- normalize_year_month_filter(df$Year, df$Month)
+  if (!"Codon_Usage" %in% names(df) && "Codon" %in% names(df)) df$Codon_Usage <- df$Codon
   if (!"Codon_Usage" %in% names(df)) df$Codon_Usage <- NA_character_
 
   data.frame(
@@ -261,10 +331,10 @@ build_usage_duckdb_cache <- function(subtypes = SUBTYPES, db_path = DUCKDB_CACHE
     message("Processing usage tables into DuckDB for ", subtype)
 
     for (var_type in c("AA", "NT")) {
-      var_root <- paste0("data/", subtype, "/", var_type, "/")
+      var_root <- count_root_path(subtype, var_type)
       if (!dir.exists(var_root)) next
 
-      gene_dirs <- list.dirs(var_root, full.names = TRUE, recursive = FALSE)
+      gene_dirs <- count_gene_dirs(subtype, var_type)
       for (g_dir in gene_dirs) {
         gene_name <- basename(g_dir)
         message("  Processing ", var_type, " / ", gene_name)
@@ -324,9 +394,9 @@ build_usage_duckdb_cache <- function(subtypes = SUBTYPES, db_path = DUCKDB_CACHE
 
 ensure_usage_duckdb_cache <- function() {
   if (!USE_DUCKDB) return(FALSE)
-  if (file.exists(DUCKDB_CACHE)) return(TRUE)
+  if (file.exists(DUCKDB_CACHE) && !cache_older_than_raw_data(DUCKDB_CACHE)) return(TRUE)
 
-  message("DuckDB cache not found. Building: ", DUCKDB_CACHE)
+  message("DuckDB cache missing or stale. Building: ", DUCKDB_CACHE)
   ok <- tryCatch(build_usage_duckdb_cache(), error = function(e) {
     message("DuckDB cache build failed: ", conditionMessage(e))
     FALSE
@@ -334,9 +404,9 @@ ensure_usage_duckdb_cache <- function() {
   isTRUE(ok) && file.exists(DUCKDB_CACHE)
 }
 
-# Subtypes to load: Dynamically detect valid subtype folders in data/
-possible_dirs <- list.dirs("data", full.names = FALSE, recursive = FALSE)
-SUBTYPES <- possible_dirs[sapply(possible_dirs, function(d) file.exists(file.path("data", d, "metadata_merged_annotated.csv")))]
+# Subtypes to load: Dynamically detect valid subtype folders in data/raw/
+possible_dirs <- list.dirs(RAW_DATA_DIR, full.names = FALSE, recursive = FALSE)
+SUBTYPES <- possible_dirs[sapply(possible_dirs, function(d) file.exists(metadata_file_path(d)))]
 if (length(SUBTYPES) > 0) {
   SUBTYPES <- c(sort(SUBTYPES[grepl("^H", SUBTYPES)]), sort(SUBTYPES[!grepl("^H", SUBTYPES)]))
 } else {
@@ -344,7 +414,7 @@ if (length(SUBTYPES) > 0) {
   SUBTYPES <- c("H1N1", "H3N2", "B_VIC", "B_YAM")
 }
 
-if (file.exists(RDS_CACHE)) {
+if (file.exists(RDS_CACHE) && !cache_older_than_raw_data(RDS_CACHE)) {
   # ---- FAST PATH: load everything from the pre-built cache ----
   message("Loading data from RDS cache: ", RDS_CACHE)
   cache <- readRDS(RDS_CACHE)
@@ -389,7 +459,7 @@ if (!cache_loaded) {
   # --- Metadata ---
   all_metadata <- list()
   for (subtype in SUBTYPES) {
-    meta_path <- paste0("data/", subtype, "/metadata_merged_annotated.csv")
+    meta_path <- metadata_file_path(subtype)
     if (file.exists(meta_path)) {
       message("Loading metadata for ", subtype)
       # CRITICAL: na = character() ensures 'NA' (Neuraminidase) is NOT treated as a missing value
@@ -419,10 +489,10 @@ if (!cache_loaded) {
   # Identify dynamic grouping columns by matching with actual usage file groupings
   usage_groups <- c()
   for (subtype in SUBTYPES) {
-    aa_root <- paste0("data/", subtype, "/AA/")
+    aa_root <- count_root_path(subtype, "AA")
     if (dir.exists(aa_root)) {
       # Look into the first gene subdirectory found
-      gene_dirs <- list.dirs(aa_root, full.names = TRUE, recursive = FALSE)
+      gene_dirs <- count_gene_dirs(subtype, "AA")
       if (length(gene_dirs) > 0) {
         files <- list.files(gene_dirs[1], pattern = "^aa_usage_by_.*\\.csv")
         usage_groups <- unique(c(usage_groups, sub("^aa_usage_by_(.*)\\.csv$", "\\1", files)))
@@ -463,10 +533,10 @@ if (!cache_loaded) {
       message("Processing usage tables into RDS for ", subtype)
 
       for (var_type in c("AA", "NT")) {
-        var_root <- paste0("data/", subtype, "/", var_type, "/")
+        var_root <- count_root_path(subtype, var_type)
         if (!dir.exists(var_root)) next
 
-        gene_dirs <- list.dirs(var_root, full.names = TRUE, recursive = FALSE)
+        gene_dirs <- count_gene_dirs(subtype, var_type)
         for (g_dir in gene_dirs) {
           gene_name <- basename(g_dir)
           message("  Processing ", var_type, " / ", gene_name)
@@ -477,8 +547,10 @@ if (!cache_loaded) {
 
           for (f in files) {
             is_ym <- grepl(paste0(prefix, "_usage_by_Year_Month\\.csv$"), f)
+            group_name <- sub(paste0("^", prefix, "_usage_by_(.*)\\.csv$"), "\\1", basename(f))
 
             df <- read_csv(f, show_col_types = FALSE, na = character()) %>%
+              strip_validation_count_cols() %>%
               dplyr::rename_with(~ gsub("^Protein$", "Gene", .x), any_of("Protein")) %>%
               mutate(Group = subtype)
 
@@ -492,14 +564,18 @@ if (!cache_loaded) {
                 mutate(Year_Month = normalize_year_month_filter(Year, Month))
             }
 
-            saveRDS(df, sub("\\.csv$", ".rds", f))
+            if (!"Codon_Usage" %in% names(df) && "Codon" %in% names(df)) df$Codon_Usage <- df$Codon
+
+            out_dir <- count_cache_gene_path(subtype, var_type, gene_name)
+            dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+            saveRDS(df, file.path(out_dir, paste0(prefix, "_usage_by_", group_name, ".rds")))
 
             if (is_ym) {
               year_df <- df %>%
                 group_by(Group, Gene, Position, Year, AminoAcid) %>%
                 summarise(Count = sum(Count, na.rm = TRUE), .groups = "drop")
 
-              saveRDS(year_df, file.path(g_dir, paste0(prefix, "_usage_by_Year.rds")))
+              saveRDS(year_df, file.path(out_dir, paste0(prefix, "_usage_by_Year.rds")))
             }
           }
         }
@@ -716,8 +792,13 @@ usage_sql_in_values <- function(values) {
 }
 
 usage_file_groups <- function(subtype, var_type, gene) {
-  dir_path <- paste0("data/", subtype, "/", var_type, "/", gene, "/")
-  files <- list.files(dir_path, pattern = paste0("^", tolower(var_type), "_usage_by_.*\\.(rds|csv)$"))
+  dirs <- c(
+    count_cache_gene_path(subtype, var_type, gene),
+    file.path(count_root_path(subtype, var_type), gene)
+  )
+  files <- unlist(lapply(dirs[dir.exists(dirs)], function(dir_path) {
+    list.files(dir_path, pattern = paste0("^", tolower(var_type), "_usage_by_.*\\.(rds|csv)$"))
+  }), use.names = FALSE)
   sort(unique(sub(paste0("^", tolower(var_type), "_usage_by_(.*)\\.(rds|csv)$"), "\\1", files)))
 }
 

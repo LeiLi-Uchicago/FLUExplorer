@@ -9,22 +9,83 @@ The current version of the app is loaded with curated human Influenza A subtype 
 FLUExplorer is intended for researchers, bioinformaticians, genomic epidemiologists, and other users who want to investigate FLU evolutionary patterns, mutation dynamics, and lineage-specific amino acid changes through an accessible visual interface.
 
 ---
+## Nextclade References
 
-## Data Processing
+Data were sourced from GISAID, with all sequences annotated via Nextclade 3. The reference datasets used for each lineage are listed below:
 
-Data were sourced from GISAID, with all sequences annotated via Nextclade 3. The reference strains utilized for each lineage are listed below: 
+#### H1N1 pdm09
 
-| Pathogen/Lineage     | Reference Strain           | GISAID Accession      |
-| -------------------- | -------------------------- | --------------------- |
-| A(H1N1)pdm09         | A/California/04/2009       | `EPI_ISL_393964`      |
-| A(H3N2)              | A/Darwin/9/2021            | `EPI_ISL_2233240`     |
-| B/Victoria           | B/Austria/1359417/2021     | `EPI_ISL_1519459`     |
-| B/Yamagata           | B/Brisbane/9/2014          | `EPI_ISL_165595`      |
+| Segment | Nextclade reference dataset |
+|---|---|
+| HA | `flu_h1n1pdm_ha` |
+| NA | `flu_h1n1pdm_na` |
+| MP | `nextstrain/flu/h1n1pdm/mp` |
+| NP | `nextstrain/flu/h1n1pdm/np` |
+| NS | `nextstrain/flu/h1n1pdm/ns` |
+| PA | `nextstrain/flu/h1n1pdm/pa` |
+| PB1 | `nextstrain/flu/h1n1pdm/pb1` |
+| PB2 | `nextstrain/flu/h1n1pdm/pb2` |
+
+#### H1N1 seasonal
+
+| Segment | Nextclade reference dataset |
+|---|---|
+| HA | `flu_h1n1_ha` |
+| NA | `flu_h1n1_na` |
+| MP | `flu_h1n1_mp` |
+| NP | `flu_h1n1_np` |
+| NS | `flu_h1n1_ns` |
+| PA | `flu_h1n1_pa` |
+| PB1 | `flu_h1n1_pb1` |
+| PB2 | `flu_h1n1_pb2` |
+
+#### H3N2
+
+| Segment | Nextclade reference dataset |
+|---|---|
+| HA | `nextstrain/flu/h3n2/ha/EPI1857216` |
+| NA | `nextstrain/flu/h3n2/na/EPI1857215` |
+| MP | `nextstrain/flu/h3n2/mp` |
+| NP | `nextstrain/flu/h3n2/np` |
+| NS | `nextstrain/flu/h3n2/ns` |
+| PA | `nextstrain/flu/h3n2/pa` |
+| PB1 | `nextstrain/flu/h3n2/pb1` |
+| PB2 | `nextstrain/flu/h3n2/pb2` |
+
+#### B/Victoria
+
+| Segment | Nextclade reference dataset |
+|---|---|
+| HA | `nextstrain/flu/vic/ha/KX058884` |
+| NA | `nextstrain/flu/vic/na/CY073894` |
+| MP | `nextstrain/flu/vic/mp` |
+| NP | `nextstrain/flu/vic/np` |
+| NS | `nextstrain/flu/vic/ns` |
+| PA | `nextstrain/flu/vic/pa` |
+| PB1 | `nextstrain/flu/vic/pb1` |
+| PB2 | `nextstrain/flu/vic/pb2` |
+
+#### B/Yamagata
+
+| Segment | Nextclade reference dataset |
+|---|---|
+| HA | `nextstrain/flu/yam/ha/JN993010` |
+| NA | `nextstrain/flu/b/na/CY073894` |
+| MP | `nextstrain/flu/b/mp` |
+| NP | `nextstrain/flu/b/np` |
+| NS | `nextstrain/flu/b/ns` |
+| PA | `nextstrain/flu/b/pa` |
+| PB1 | `nextstrain/flu/b/pb1` |
+| PB2 | `nextstrain/flu/b/pb2` |
 
 
 ---
 
 ## Update Log
+
+### 2026-05-12
+
+- Update clade annotation and codon.
 
 ### 2026-05-05
 

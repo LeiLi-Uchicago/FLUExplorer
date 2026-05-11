@@ -96,6 +96,7 @@ ui <- navbarPage(
       }
       .info-markdown table {
         width: 100%;
+        table-layout: fixed;
         margin: 1.25rem 0;
         border-collapse: separate;
         border-spacing: 0;
@@ -123,6 +124,11 @@ ui <- navbarPage(
       .info-markdown th + th,
       .info-markdown td + td {
         border-left: 1px solid #ecf0f1;
+      }
+      .info-markdown code {
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: break-word;
       }
       .summary-card {
         background: #ffffff;
