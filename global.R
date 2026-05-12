@@ -433,8 +433,13 @@ ensure_usage_duckdb_cache <- function() {
 }
 
 # Subtypes to load: Dynamically detect valid subtype folders in data/raw/
-possible_dirs <- list.dirs(RAW_DATA_DIR, full.names = FALSE, recursive = FALSE)
-SUBTYPES <- possible_dirs[sapply(possible_dirs, function(d) file.exists(metadata_file_path(d)))]
+possible_dirs <- if (dir.exists(RAW_DATA_DIR)) {
+  list.dirs(RAW_DATA_DIR, full.names = FALSE, recursive = FALSE)
+} else {
+  character(0)
+}
+has_metadata_file <- vapply(possible_dirs, function(d) file.exists(metadata_file_path(d)), logical(1))
+SUBTYPES <- possible_dirs[has_metadata_file]
 if (length(SUBTYPES) > 0) {
   SUBTYPES <- c(sort(SUBTYPES[grepl("^H", SUBTYPES)]), sort(SUBTYPES[!grepl("^H", SUBTYPES)]))
 } else {
