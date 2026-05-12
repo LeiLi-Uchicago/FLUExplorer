@@ -99,7 +99,7 @@ server <- function(input, output, session) {
 
   available_genes <- reactive({
     req(input$global_subtype, input$variation_type)
-    genes <- available_count_genes(input$global_subtype, input$variation_type, prefer_cache = TRUE)
+    genes <- usage_available_genes(input$global_subtype, input$variation_type)
     sort(genes)
   })
   
@@ -599,7 +599,7 @@ server <- function(input, output, session) {
     req(input$global_subtype, input$variation_type, input$pw_group_by)
     
     # Fast path: Check one gene instead of evaluating pairwise_usage_data() which eagerly loads all genes
-    genes <- available_count_genes(input$global_subtype, input$variation_type, prefer_cache = TRUE)
+    genes <- usage_available_genes(input$global_subtype, input$variation_type)
     if(length(genes) == 0) return()
     gene <- if("HA" %in% genes) "HA" else genes[1]
 
@@ -1652,7 +1652,7 @@ server <- function(input, output, session) {
     
     # --- FAST SANITY CHECK ---
     # Prevent premature execution: If the group changed, wait for the clade dropdowns to update first.
-    genes <- available_count_genes(input$global_subtype, input$variation_type, prefer_cache = TRUE)
+    genes <- usage_available_genes(input$global_subtype, input$variation_type)
     if(length(genes) > 0) {
       gene <- if("HA" %in% genes) "HA" else genes[1]
       if (usage_duckdb_available()) {

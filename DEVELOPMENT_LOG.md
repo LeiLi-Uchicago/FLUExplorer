@@ -9,6 +9,7 @@
 - **Cache Freshness Checks:** Added raw CSV modification-time checks so compact RDS and DuckDB caches rebuild when reorganized or updated raw data are newer than existing caches.
 - **Validation Column Exclusion:** Dropped `CodonStatus` and `CodonSource` before writing app caches while preserving `Codon` as the app-facing `Codon_Usage` field.
 - **Mode-Aware Gene Discovery:** Restricted gene discovery by actual `aa_usage_by_*` or `nt_usage_by_*` files so AA-only raw data no longer exposes empty NT protein options.
+- **Cache-Only Startup:** Updated startup and gene discovery so completed RDS/DuckDB caches are trusted when raw count files have been removed after cache generation.
 
 ---
 

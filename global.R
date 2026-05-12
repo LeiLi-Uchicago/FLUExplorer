@@ -422,7 +422,7 @@ build_usage_duckdb_cache <- function(subtypes = SUBTYPES, db_path = DUCKDB_CACHE
 
 ensure_usage_duckdb_cache <- function() {
   if (!USE_DUCKDB) return(FALSE)
-  if (file.exists(DUCKDB_CACHE) && !cache_older_than_raw_data(DUCKDB_CACHE)) return(TRUE)
+  if (file.exists(DUCKDB_CACHE)) return(TRUE)
 
   message("DuckDB cache missing or stale. Building: ", DUCKDB_CACHE)
   ok <- tryCatch(build_usage_duckdb_cache(), error = function(e) {
@@ -442,7 +442,7 @@ if (length(SUBTYPES) > 0) {
   SUBTYPES <- c("H1N1", "H3N2", "B_VIC", "B_YAM")
 }
 
-if (file.exists(RDS_CACHE) && !cache_older_than_raw_data(RDS_CACHE)) {
+if (file.exists(RDS_CACHE)) {
   # ---- FAST PATH: load everything from the pre-built cache ----
   message("Loading data from RDS cache: ", RDS_CACHE)
   cache <- readRDS(RDS_CACHE)
@@ -450,7 +450,10 @@ if (file.exists(RDS_CACHE) && !cache_older_than_raw_data(RDS_CACHE)) {
   # Check if the lightweight cache is present
   required_objects <- c("metadata_summary_stats", "important_pos_df", "metadata_grouping_cols")
   if (all(required_objects %in% names(cache))) {
-    if (is.null(cache$cache_schema_version) || !identical(as.integer(cache$cache_schema_version), CACHE_SCHEMA_VERSION)) {
+    if (
+      (is.null(cache$cache_schema_version) || !identical(as.integer(cache$cache_schema_version), CACHE_SCHEMA_VERSION)) &&
+        raw_metadata_available()
+    ) {
       message("RDS cache schema is outdated. Rebuilding from raw metadata...")
       cache_loaded <- FALSE
     } else if (!"metadata_clade_explorer" %in% names(cache) && raw_metadata_available()) {
@@ -831,6 +834,17 @@ usage_file_groups <- function(subtype, var_type, gene) {
     list.files(dir_path, pattern = paste0("^", tolower(var_type), "_usage_by_.*\\.(rds|csv)$"))
   }), use.names = FALSE)
   sort(unique(sub(paste0("^", tolower(var_type), "_usage_by_(.*)\\.(rds|csv)$"), "\\1", files)))
+}
+
+usage_available_genes <- function(subtype, var_type) {
+  if (!usage_duckdb_available()) return(available_count_genes(subtype, var_type, prefer_cache = TRUE))
+
+  res <- usage_query(
+    "SELECT DISTINCT Gene FROM usage WHERE \"Group\" = ? AND Variation_Type = ?",
+    list(subtype, var_type)
+  )
+  if (is.null(res) || nrow(res) == 0) return(available_count_genes(subtype, var_type, prefer_cache = TRUE))
+  sort(stats::na.omit(as.character(res$Gene)))
 }
 
 usage_available_groups <- function(subtype, var_type, gene) {
