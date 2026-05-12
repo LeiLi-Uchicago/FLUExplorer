@@ -1,77 +1,213 @@
-# 🧬 FLU Amino Acid Divergence Explorer
+# FLU Amino Acid Divergence Explorer
 
 ![R Version](https://img.shields.io/badge/R-%3E%3D%204.0.0-blue)
 ![Shiny](https://img.shields.io/badge/Built_with-R_Shiny-success)
 ![Bioinformatics](https://img.shields.io/badge/Field-Bioinformatics-purple)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-**FLU Amino Acid Divergence Explorer** is a high-resolution, interactive web application designed for the genomic analysis of niun erin
----
+**FLU Amino Acid Divergence Explorer** is an interactive Shiny application for exploring influenza amino acid variation across subtypes, clades, countries/regions, and collection dates. It supports dataset-level summaries, clade prevalence tracking, single-position residue distributions, pairwise clade comparisons, and gene-wide conservation/mutation views.
 
-## ✨ Key Features
+## Key Features
 
-### 🌍 1. Dataset Insights
-* **Global Control C:Iab
-* **Temporal & Regional Breakdown:** Interactive Plotly charts showing the seasonality of sequencing efforts and geographic hotspots.
+### Dataset Insights
 
-### 🔬 2. Single Position Explorer
-* Dive deep into the amino acid or nucleotide distribution of any specific position within an Influenza gene (HA, NA, etc.).
-* Easily toggle between raw sequence counts and relative frequencies.
-* Export publication-ready plots (PNG/PDF) and conditionally-formatted Excel data matrices.
+- Summarizes total sequences, represented countries, and collection time span.
+- Visualizes sequencing volume over time, regional composition, and subtype-specific metadata breakdowns.
 
-### ⚖️ 3. Pairwise Comparison
-* Instantly identify robust, fixed amino acid differences between any two selected viral clades.
-* Set custom consensus thresholds (e.g., >90% dominant frequency) to filter out background noise.
+### Genetic Clade
 
-### 🏔️ 4. Gene-Wide Landscapes
-* **Conservation (Entropy):** Calculates Shannon Entropy to map hypervariable peaks and highly conserved valleys across an entire gene.
-* **Mutation Tracker (Lollipop):** Generates staggered lollipop plots to visualize fixed amino acid mutations in a newly emerged target clade against an ancestral reference clade.
-* **Interactive Consensus MSA:** Utilizes `msaR` to perform real-time alignments of consensus sequences, highlighting exact regions of structural divergence.
+- Lets users choose a clade annotation and then search/select ranked clades.
+- Shows total sequence count, rank/share, active period, peak prevalence month, monthly prevalence curves, and metadata breakdowns.
 
----
+### Single Position Explorer
 
-## 🚀 Getting Started
+- Shows amino acid distributions at a selected gene position.
+- Supports grouping by year, year-month, clade, and available metadata annotations.
+- Can display percentages or raw counts and export plots/tables.
 
-### Prerequisites
-To run this application locally, you will need **R (>= 4.0.0)** installed on your machine.
+### Pairwise Comparison
 
-```R
-# 1. Install CRAN packages
-install.packages(c("shiny", "dplyr", "ggplot2", "DT", "readr", "tidyr", 
-                   "openxlsx", "plotly", "waiter", "lubridate", "tidyverse", 
-                   "leaflet", "leaflet.minicharts", "shinyWidgets", "shinyjs",
-                   "DBI", "dbplyr", "duckdb"))
+- Compares two selected groups/clades across genes.
+- Identifies fixed or near-fixed amino acid differences using a user-defined dominant-frequency threshold.
 
-# 2. Install Bioconductor packages
-if (!require("BiocManager", quietly = TRUE))
-    install.packages("BiocManager")
+### Gene-Wide Landscapes
 
-BiocManager::install(c("Biostrings", "msa", "msaR"))
-```
+- **Conservation (Entropy):** Maps positional Shannon entropy across a gene.
+- **Mutation Tracker (Lollipop):** Visualizes fixed amino acid mutations in a target group compared with a reference group.
 
-### Installation & Execution
-1. Clone the repository:
-```Bash
+## Local Setup
+
+### 1. Install R
+
+Install R 4.0 or newer from [CRAN](https://cran.r-project.org/). RStudio is optional but recommended for interactive development.
+
+### 2. Clone the Repository
+
+```bash
 git clone https://github.com/LeiLi-Uchicago/FLUExplorer.git
 cd FLUExplorer
 ```
-2. Open the project in RStudio.
-3. Run the App: Open `global.R` and click the "Run App" button.
 
-## 📁 Repository Structure
-```Plaintext
-├── global.R                  # Multi-subtype data pipeline and color mapping
-├── ui.R                      # Global control UI and customized styling
-├── server.R                  # Backend logic and interactive visualizations
-├── data/                     # Organized by Subtype
-│   ├── H1N1/                 # Metadata and usage tables for H1N1
-│   ├── H3N2/                 # Metadata and usage tables for H3N2
-│   └── app_cache_flu_v2.rds  # Optimized binary cache for instant loading
-└── www/                      # Static web assets
+### 3. Install R Packages
+
+Open R from the project folder and install the required packages:
+
+```r
+install.packages(c(
+  "shiny",
+  "dplyr",
+  "ggplot2",
+  "DT",
+  "readr",
+  "tidyr",
+  "openxlsx",
+  "plotly",
+  "waiter",
+  "lubridate",
+  "tidyverse",
+  "shinyWidgets",
+  "shinyjs",
+  "viridis",
+  "scales",
+  "ggtext",
+  "DBI",
+  "duckdb"
+))
 ```
 
-## ✍️ Authors & Citation
-Lei Li - Initial work & Development.
+`duckdb` and `DBI` are strongly recommended because the app uses a compact DuckDB usage cache to avoid loading large count tables into memory. If `duckdb` is not installed, the app falls back to legacy RDS lazy loading when those cache files are available.
 
-## 📜 License
+### 4. Organize Raw Data
+
+Place raw metadata and count tables under `data/raw`. Each subtype should have its own folder:
+
+```text
+data/
+└── raw/
+    ├── H1N1/
+    │   ├── metadata_merged_annotated.csv
+    │   └── count/
+    │       ├── HA/
+    │       │   ├── aa_usage_by_HA_clade.csv
+    │       │   ├── aa_usage_by_NA_clade.csv
+    │       │   └── aa_usage_by_Year_Month.csv
+    │       └── ...
+    ├── H3N2/
+    │   ├── metadata_merged_annotated.csv
+    │   └── count/
+    ├── B_VIC/
+    │   ├── metadata_merged_annotated.csv
+    │   └── count/
+    └── B_YAM/
+        ├── metadata_merged_annotated.csv
+        └── count/
+```
+
+Count tables should be named with this pattern:
+
+```text
+aa_usage_by_<GROUPING>.csv
+nt_usage_by_<GROUPING>.csv
+```
+
+Examples:
+
+```text
+aa_usage_by_HA_clade.csv
+aa_usage_by_NA_clade.csv
+aa_usage_by_HA_legacy_clade_yam.csv
+aa_usage_by_Year_Month.csv
+```
+
+The app ignores validation-only count columns named `CodonStatus` and `CodonSource` when it builds caches. If a `Codon` column is present, it is preserved in the app cache as `Codon_Usage`.
+
+### 5. Build or Refresh Caches
+
+On first startup, FLUExplorer builds:
+
+- `data/app_cache_flu.rds`: compact metadata/statistics cache
+- `data/flu_explorer.duckdb`: normalized AA/NT usage table cache
+- `data/flu_explorer_duckdb_meta.rds`: DuckDB cache metadata
+
+You can build/refresh them from R:
+
+```r
+source("global.R")
+```
+
+The app checks raw CSV modification times and rebuilds stale caches when raw files under `data/raw` are newer than the existing cache files.
+
+By default, DuckDB index creation is skipped to keep cache builds stable on large data. To opt in:
+
+```r
+Sys.setenv(FLUEXPLORER_DUCKDB_CREATE_INDEXES = "true")
+source("global.R")
+```
+
+### 6. Run the App
+
+From R:
+
+```r
+shiny::runApp(".")
+```
+
+Or from a shell in the repository:
+
+```bash
+Rscript -e 'shiny::runApp(".", host = "127.0.0.1", port = 4055)'
+```
+
+Then open:
+
+```text
+http://127.0.0.1:4055
+```
+
+## Repository Structure
+
+```text
+.
+├── APP_INFO.md                  # Methods, reference datasets, and app update notes
+├── DEVELOPMENT_LOG.md           # Development history and implementation notes
+├── README.md                    # Setup and usage guide
+├── global.R                     # Package loading, cache building, path helpers, query helpers
+├── server.R                     # Shiny server logic and interactive analyses
+├── ui.R                         # Shiny UI, navigation, and styling
+├── data/
+│   ├── raw/                     # User-provided raw metadata and count tables
+│   ├── app_cache_flu.rds        # Generated compact metadata cache
+│   ├── flu_explorer.duckdb      # Generated DuckDB usage cache
+│   └── flu_explorer_duckdb_meta.rds
+└── www/                         # Static app assets
+```
+
+## Troubleshooting
+
+### The app starts slowly the first time
+
+This is expected when caches are missing or stale. The first run reads raw CSVs and builds the compact metadata and DuckDB caches.
+
+### A subtype or gene does not appear
+
+Check that the subtype has:
+
+- `data/raw/<SUBTYPE>/metadata_merged_annotated.csv`
+- one or more count files under `data/raw/<SUBTYPE>/count/<GENE>/`
+- count files named `aa_usage_by_*.csv` or `nt_usage_by_*.csv`
+
+### NT mode has no genes
+
+NT mode only appears when matching `nt_usage_by_*.csv` files exist. AA-only datasets will not expose NT gene choices.
+
+### Memory use is high
+
+Install `duckdb` and rebuild caches with `source("global.R")`. DuckDB-backed queries keep the app from loading full usage tables into R memory for most workflows.
+
+## Authors
+
+Lei Li - Initial work and development.
+
+## License
+
 This project is licensed under the MIT License.

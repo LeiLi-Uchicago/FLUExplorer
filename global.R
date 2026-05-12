@@ -32,6 +32,7 @@ options(scipen = 999)
 RDS_CACHE <- "data/app_cache_flu.rds"
 DUCKDB_CACHE <- "data/flu_explorer.duckdb"
 DUCKDB_META_CACHE <- "data/flu_explorer_duckdb_meta.rds"
+CACHE_SCHEMA_VERSION <- 3L
 RAW_DATA_DIR <- "data/raw"
 COUNT_RDS_CACHE_DIR <- "data/count_cache"
 VALIDATION_ONLY_COUNT_COLS <- c("CodonStatus", "CodonSource")
@@ -101,6 +102,25 @@ strip_validation_count_cols <- function(df) {
   df[, setdiff(names(df), VALIDATION_ONLY_COUNT_COLS), drop = FALSE]
 }
 
+parse_metadata_year_month <- function(metadata) {
+  year_values <- if ("Year" %in% names(metadata)) as.character(metadata$Year) else rep(NA_character_, nrow(metadata))
+  month_values <- if ("Month" %in% names(metadata)) as.character(metadata$Month) else rep(NA_character_, nrow(metadata))
+
+  parsed_year <- suppressWarnings(as.numeric(trimws(year_values)))
+  month_clean <- trimws(month_values)
+  month_clean[is.na(month_clean) | month_clean == ""] <- NA_character_
+  month_clean <- ifelse(
+    grepl("^[0-9]+$", month_clean),
+    stringr::str_pad(month_clean, width = 2, side = "left", pad = "0"),
+    month_clean
+  )
+
+  metadata$Year <- parsed_year
+  metadata$Month <- month_clean
+  metadata$YM <- ifelse(!is.na(parsed_year) & !is.na(month_clean), paste0(parsed_year, "-", month_clean), NA_character_)
+  metadata
+}
+
 empty_metadata_clade_explorer <- function() {
   list(
     month_totals = tibble::tibble(),
@@ -137,7 +157,7 @@ build_metadata_clade_explorer_summary <- function(metadata, annotation_cols) {
   }
 
   subtype_totals <- metadata %>%
-    count(Group, name = "SubtypeTotal")
+    count(Group, name = "TotalSequences")
 
   base <- purrr::map_dfr(annotation_cols, function(annotation) {
     metadata %>%
@@ -169,17 +189,25 @@ build_metadata_clade_explorer_summary <- function(metadata, annotation_cols) {
     ) %>%
     arrange(Group, Annotation, Clade, YearMonth)
 
+  annotation_totals <- base %>%
+    count(Group, Annotation, name = "AnnotatedTotal") %>%
+    left_join(subtype_totals, by = "Group") %>%
+    mutate(
+      MissingAnnotationCount = pmax(.data$TotalSequences - .data$AnnotatedTotal, 0),
+      AnnotationCoverage = dplyr::if_else(.data$TotalSequences > 0, (.data$AnnotatedTotal / .data$TotalSequences) * 100, 0)
+    )
+
   totals <- base %>%
     count(Group, Annotation, Clade, name = "StrainCount") %>%
-    left_join(subtype_totals, by = "Group") %>%
+    left_join(annotation_totals, by = c("Group", "Annotation")) %>%
     arrange(Group, Annotation, desc(StrainCount), Clade) %>%
     group_by(Group, Annotation) %>%
     mutate(
       Rank = row_number(),
-      DatasetShare = dplyr::if_else(.data$SubtypeTotal > 0, (.data$StrainCount / .data$SubtypeTotal) * 100, 0)
+      DatasetShare = dplyr::if_else(.data$AnnotatedTotal > 0, (.data$StrainCount / .data$AnnotatedTotal) * 100, 0),
+      TotalDatasetShare = dplyr::if_else(.data$TotalSequences > 0, (.data$StrainCount / .data$TotalSequences) * 100, 0)
     ) %>%
-    ungroup() %>%
-    select(-SubtypeTotal)
+    ungroup()
 
   periods <- base %>%
     filter(!is.na(.data$YearMonth), .data$YearMonth != "") %>%
@@ -422,7 +450,10 @@ if (file.exists(RDS_CACHE) && !cache_older_than_raw_data(RDS_CACHE)) {
   # Check if the lightweight cache is present
   required_objects <- c("metadata_summary_stats", "important_pos_df", "metadata_grouping_cols")
   if (all(required_objects %in% names(cache))) {
-    if (!"metadata_clade_explorer" %in% names(cache) && raw_metadata_available()) {
+    if (is.null(cache$cache_schema_version) || !identical(as.integer(cache$cache_schema_version), CACHE_SCHEMA_VERSION)) {
+      message("RDS cache schema is outdated. Rebuilding from raw metadata...")
+      cache_loaded <- FALSE
+    } else if (!"metadata_clade_explorer" %in% names(cache) && raw_metadata_available()) {
       message("RDS cache is missing Genetic Clade summaries. Rebuilding from raw metadata...")
       cache_loaded <- FALSE
     } else {
@@ -468,10 +499,9 @@ if (!cache_loaded) {
       # Rename columns to match app expectations
       # Group = Subtype (A / H1N1)
       meta <- meta %>% 
-        dplyr::rename(any_of(c(Group = "Subtype", 
-                                 date = "Collection_Date",
-                                 clade = "HA_clade", 
-                                 G_clade = "NA_clade")))
+        dplyr::rename(any_of(c(Group = "Subtype",
+                               clade = "HA_clade",
+                               G_clade = "NA_clade")))
       
       # Force Group name to match the folder exactly (bypassing messy fasta labels like "B / Victoria")
       meta$Group <- subtype
@@ -516,9 +546,9 @@ if (!cache_loaded) {
     }
   }
 
-  # Robust Date Handling
-  metadata_global$Year <- as.numeric(stringr::str_extract(metadata_global$date, "^\\d{4}"))
-  metadata_global$YM <- stringr::str_extract(metadata_global$date, "^\\d{4}-\\d{2}")
+  # Metadata time handling: use the explicit parsed Year/Month columns from
+  # metadata_merged_annotated.csv. Do not parse Collection_Date here.
+  metadata_global <- parse_metadata_year_month(metadata_global)
   
   total_raw    <- scales::comma(nrow(metadata_global))
   metadata_global <- metadata_global %>% filter(!is.na(Year))
@@ -626,6 +656,7 @@ if (!cache_loaded) {
 
   saveRDS(
     list(
+      cache_schema_version   = CACHE_SCHEMA_VERSION,
       total_raw              = total_raw,
       total_parsed           = total_parsed,
       important_pos_df       = important_pos_df,

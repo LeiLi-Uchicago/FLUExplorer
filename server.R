@@ -825,16 +825,25 @@ server <- function(input, output, session) {
       column(
         3,
         div(class = "summary-card gc-summary-card",
-            div(class = "summary-card-title", "Total Sequences"),
+            div(class = "summary-card-title", "Selected Clade Sequences"),
             div(class = "summary-card-value", scales::comma(summary_row$StrainCount[[1]])),
-            tags$p(class = "gc-summary-card-note", clade_annotation_label(summary_row$Annotation[[1]])))
+            tags$p(
+              class = "gc-summary-card-note",
+              paste0(
+                clade_annotation_label(summary_row$Annotation[[1]]),
+                " coverage: ",
+                scales::comma(summary_row$AnnotatedTotal[[1]]),
+                " / ",
+                scales::comma(summary_row$TotalSequences[[1]])
+              )
+            ))
       ),
       column(
         3,
         div(class = "summary-card gc-summary-card",
             div(class = "summary-card-title", "Rank / Share"),
             div(class = "summary-card-value", paste0("#", summary_row$Rank[[1]])),
-            tags$p(class = "gc-summary-card-note", paste0(round(summary_row$DatasetShare[[1]], 2), "% of subtype")))
+            tags$p(class = "gc-summary-card-note", paste0(round(summary_row$DatasetShare[[1]], 2), "% of annotated clades")))
       ),
       column(
         3,
