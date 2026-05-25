@@ -32,7 +32,7 @@ options(scipen = 999)
 RDS_CACHE <- "data/app_cache_flu.rds"
 DUCKDB_CACHE <- "data/flu_explorer.duckdb"
 DUCKDB_META_CACHE <- "data/flu_explorer_duckdb_meta.rds"
-CACHE_SCHEMA_VERSION <- 3L
+CACHE_SCHEMA_VERSION <- 4L
 RAW_DATA_DIR <- "data/raw"
 COUNT_RDS_CACHE_DIR <- "data/count_cache"
 VALIDATION_ONLY_COUNT_COLS <- c("CodonStatus", "CodonSource")
@@ -649,7 +649,8 @@ if (!cache_loaded) {
   # Pre-calculate these before saving if they weren't loaded from cache
   message("Pre-aggregating metadata statistics...")
   metadata_summary_stats <- metadata_global %>%
-    group_by(across(all_of(c("Year", "Group", "region", "country", metadata_grouping_cols)))) %>%
+    mutate(YearMonth = .data$YM) %>%
+    group_by(across(all_of(c("Year", "YearMonth", "Group", "region", "country", metadata_grouping_cols)))) %>%
     summarise(n = n(), .groups = "drop")
 
   metadata_clade_explorer <- build_metadata_clade_explorer_summary(metadata_global, metadata_grouping_cols)

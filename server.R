@@ -1083,9 +1083,11 @@ server <- function(input, output, session) {
     
     major_continents <- c("Africa", "Asia", "Europe", "North America", "South America", "Oceania")
     
-    metadata_summary_stats %>%
+    out <- metadata_summary_stats %>%
       filter(Year >= input$stats_year_range[1], Year <= input$stats_year_range[2]) %>%
       filter(region %in% major_continents)
+    if (!"YearMonth" %in% names(out)) out$YearMonth <- NA_character_
+    out
   })
 
   output$stats_time_plot <- renderPlotly({
@@ -1125,18 +1127,55 @@ server <- function(input, output, session) {
       config(displayModeBar = FALSE)
   })
 
+  output$stats_clade_plot_title <- renderText({
+    time_label <- if (identical(scalar_input(input$clade_plot_time_scale), "YearMonth")) "Year-Month" else "Year"
+    paste("Custom Dataset Breakdown by", time_label)
+  })
+
   output$stats_clade_plot <- renderPlotly({
-    req(input$clade_plot_fill, input$clade_plot_subtype, input$clade_plot_palette)
+    req(input$clade_plot_fill, input$clade_plot_subtype, input$clade_plot_palette, input$clade_plot_time_scale)
 
     plot_df <- stats_metadata_filtered()
     # No longer check for "All" because it's removed from UI
     plot_df <- plot_df %>% filter(Group == input$clade_plot_subtype)
 
+    time_scale <- scalar_input(input$clade_plot_time_scale) %||% "Year"
+    time_col <- if (identical(time_scale, "YearMonth")) "YearMonth" else "Year"
+    time_label <- if (identical(time_col, "YearMonth")) "Year-Month" else "Year"
+    validate(need(time_col %in% names(plot_df), "Year-month data are not available. Refresh the metadata cache to use this X axis."))
+
+    if (identical(time_col, "YearMonth")) {
+      plot_df <- plot_df %>% filter(!is.na(.data$YearMonth), .data$YearMonth != "")
+    }
+
     summary_df <- plot_df %>%
-      group_by(Year, fill_val = !!sym(input$clade_plot_fill)) %>%
+      mutate(plot_time = .data[[time_col]]) %>%
+      group_by(plot_time, fill_val = !!sym(input$clade_plot_fill)) %>%
       summarise(Count = sum(n), .groups = "drop")
     
     validate(need(nrow(summary_df) > 0, "No data available for the current filters."))
+
+    if (identical(time_col, "YearMonth")) {
+      year_month_levels <- sort(unique(as.character(summary_df$plot_time)))
+      tick_values <- every_nth_value(year_month_levels)
+      summary_df <- summary_df %>%
+        mutate(plot_time = factor(as.character(.data$plot_time), levels = year_month_levels)) %>%
+        arrange(.data$plot_time, .data$fill_val)
+      xaxis_config <- list(
+        title = time_label,
+        tickangle = -45,
+        tickfont = list(family = "Arial", size = 11),
+        type = "category",
+        categoryorder = "array",
+        categoryarray = year_month_levels,
+        tickmode = "array",
+        tickvals = tick_values,
+        ticktext = tick_values
+      )
+    } else {
+      summary_df <- summary_df %>% arrange(.data$plot_time, .data$fill_val)
+      xaxis_config <- list(title = time_label, tickangle = -45, tickfont = list(family = "Arial", size = 12), tickformat = "d")
+    }
     
     fill_items <- sort(unique(summary_df$fill_val))
     
@@ -1150,12 +1189,12 @@ server <- function(input, output, session) {
       my_colors["Unknown"] <- "#d3d3d3"
     }
     
-    plot_ly(summary_df, x = ~Year, y = ~Count, color = ~fill_val, colors = my_colors,
+    plot_ly(summary_df, x = ~plot_time, y = ~Count, color = ~fill_val, colors = my_colors,
             type = "bar", hoverinfo = "text",
-            text = ~paste0("Year: ", Year, "<br>", input$clade_plot_fill, ": ", fill_val, "<br>Count: ", scales::comma(Count)),
+            text = ~paste0(time_label, ": ", plot_time, "<br>", input$clade_plot_fill, ": ", fill_val, "<br>Count: ", scales::comma(Count)),
             marker = list(line = list(color = 'white', width = 0.5))) %>%
       layout(barmode = 'stack',
-             xaxis = list(title = "Year", tickangle = -45, tickfont = list(family = "Arial", size = 12), tickformat = "d"),
+             xaxis = xaxis_config,
              yaxis = list(title = "Sequence Count", tickformat = ","),
              legend = list(title = list(text = ""))) %>%
       config(displayModeBar = FALSE)
