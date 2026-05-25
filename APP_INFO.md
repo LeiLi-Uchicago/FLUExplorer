@@ -83,6 +83,9 @@ Data were sourced from GISAID, with all sequences annotated via Nextclade 3. The
 
 ## Update Log
 
+### 2026-05-25
+- Fix a BUG in count for HA protein
+
 ### 2026-05-12
 
 - Update clade annotation and codon.
